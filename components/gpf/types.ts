@@ -1,4 +1,4 @@
-export type MapMode = "pressure" | "narrative" | "entanglement";
+export type MapMode = "pressure" | "narrative" | "entanglement" | "sentiment";
 
 export type Trend = "up" | "down" | "stable";
 
@@ -55,6 +55,11 @@ export const mapModeConfig: Record<
     label: "Entanglement",
     hotspotLabel: "ENTANGLEMENT NODES",
     legendLabel: "Connection Strength",
+  },
+  sentiment: {
+    label: "Sentiment",
+    hotspotLabel: "SENTIMENT NODES",
+    legendLabel: "Attitude Toward You",
   },
 };
 

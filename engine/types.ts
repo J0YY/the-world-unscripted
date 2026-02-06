@@ -189,6 +189,19 @@ export type ControlRoomView = {
     source: "Intercept" | "Foreign Desk" | "Markets" | "Embassy Cable";
     content: string;
   }>;
+  map?: {
+    // The map overlay can differ by mode; intensity maps to dot color per mode.
+    clustersByMode: Partial<Record<"pressure" | "narrative" | "entanglement" | "sentiment", Array<{
+      id: string;
+      lat: number;
+      lon: number;
+      intensity: "high" | "med" | "low";
+      radius: number;
+      dotCount: number;
+    }>>>;
+    fogRegions?: Array<{ lat: number; lon: number; radius: number }>;
+    homeRegion?: { lat: number; lon: number };
+  };
   // Minimal memory marker so UI can show provenance.
   generatedBy: "llm";
   memory: {

@@ -281,6 +281,76 @@ export const LlmControlRoomViewSchema = z.object({
     )
     .min(4)
     .max(14),
+  map: z
+    .object({
+      clustersByMode: z
+        .object({
+          pressure: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(80),
+                lat: z.number().min(-85).max(85),
+                lon: z.number().min(-180).max(180),
+                intensity: z.enum(["high", "med", "low"]),
+                radius: z.number().int().min(10).max(120),
+                dotCount: z.number().int().min(6).max(40),
+              }),
+            )
+            .min(1)
+            .max(8)
+            .optional(),
+          narrative: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(80),
+                lat: z.number().min(-85).max(85),
+                lon: z.number().min(-180).max(180),
+                intensity: z.enum(["high", "med", "low"]),
+                radius: z.number().int().min(10).max(120),
+                dotCount: z.number().int().min(6).max(40),
+              }),
+            )
+            .min(1)
+            .max(8)
+            .optional(),
+          entanglement: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(80),
+                lat: z.number().min(-85).max(85),
+                lon: z.number().min(-180).max(180),
+                intensity: z.enum(["high", "med", "low"]),
+                radius: z.number().int().min(10).max(120),
+                dotCount: z.number().int().min(6).max(40),
+              }),
+            )
+            .min(1)
+            .max(8)
+            .optional(),
+          sentiment: z
+            .array(
+              z.object({
+                id: z.string().min(1).max(80),
+                lat: z.number().min(-85).max(85),
+                lon: z.number().min(-180).max(180),
+                intensity: z.enum(["high", "med", "low"]),
+                radius: z.number().int().min(10).max(120),
+                dotCount: z.number().int().min(6).max(40),
+              }),
+            )
+            .min(1)
+            .max(8)
+            .optional(),
+        })
+        .strict(),
+      fogRegions: z
+        .array(z.object({ lat: z.number().min(-85).max(85), lon: z.number().min(-180).max(180), radius: z.number().min(5).max(50) }))
+        .min(0)
+        .max(6)
+        .optional(),
+      homeRegion: z.object({ lat: z.number().min(-85).max(85), lon: z.number().min(-180).max(180) }).optional(),
+    })
+    .optional(),
   generatedBy: z.literal("llm"),
   memory: z.object({
     previousTurnsUsed: z.number().int().min(0).max(5),

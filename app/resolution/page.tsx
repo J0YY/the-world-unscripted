@@ -18,6 +18,7 @@ type ResolutionReport = {
   deltas: Array<{ label: string; before: number; after: number; delta: number }>;
   actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
   threats: string[];
+  directiveParseNotes?: string[];
   llm?: {
     headline: string;
     narrative: string[];
@@ -73,6 +74,16 @@ export default function ResolutionPage() {
             <div className="mt-3 rounded-lg bg-black/30 p-3 text-sm text-white/85 ring-1 ring-white/10 whitespace-pre-wrap">
               {report.directive?.trim() ? report.directive : "(no directive submitted)"}
             </div>
+            {report.directiveParseNotes?.length ? (
+              <div className="mt-3 rounded-lg bg-red-950/20 p-3 text-xs text-red-200 ring-1 ring-red-500/20">
+                <div className="text-[10px] tracking-widest uppercase text-red-200/80">Directive parsing</div>
+                <ul className="mt-2 list-disc pl-5 space-y-1">
+                  {report.directiveParseNotes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="mt-4 text-sm font-semibold text-white">Operations executed</div>
             <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-white/80">

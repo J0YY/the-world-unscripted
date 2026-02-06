@@ -355,13 +355,27 @@ export async function llmParsePlayerDirective(args: {
   world: WorldState;
   remainingSlots: number;
 }): Promise<{ actions: PlayerAction[]; rationale: string[]; llmRaw: unknown }> {
+  const context = summarizeWorldForLlm(args.world);
+
+  const allowed = [
+    "Allowed actions:",
+    "- DIPLOMACY subkind: MESSAGE | OFFER | THREAT | TREATY_PROPOSAL (requires targetActor, topic, tone)",
+    "- ECONOMY subkind: SUBSIDIES | AUSTERITY | INDUSTRIAL_PUSH | TRADE_DEAL_ATTEMPT",
+    "- MILITARY subkind: MOBILIZE | LIMITED_STRIKE | DEFENSIVE_POSTURE | FULL_INVASION | PROXY_SUPPORT | ARMS_PURCHASE",
+    "- INTEL subkind: SURVEILLANCE | COUNTERINTEL | COVERT_OP",
+    "- MEDIA subkind: PROPAGANDA_PUSH | CENSORSHIP_CRACKDOWN | NARRATIVE_FRAMING",
+    "- INSTITUTIONS subkind: PURGE_ELITES | REFORM_PACKAGE | ANTI_CORRUPTION_DRIVE | ELECTION_TIMING",
+    "Rules:",
+    "- Output strict JSON only.",
+    "- Always return 1..remainingSlots actions.",
+    "- Use intensity 1-3. Choose isPublic (true/false).",
+    "- If the directive asks for something too extreme/illegal/impossible, map it to the closest allowed action(s) instead of failing.",
+  ].join("\n");
+
   const system = [
-    "You are a game systems assistant translating player intent into structured actions.",
+    "You translate player intent into structured actions for a grounded geopolitical simulation.",
     "You MUST output strict JSON.",
-    "Only produce actions that are plausible for a head of state.",
-    "Do not exceed remainingSlots.",
-    "Use intensity 1-3. Choose isPublic thoughtfully.",
-    "Never output more than remainingSlots actions.",
+    allowed,
   ].join("\n");
 
   const user = [
@@ -370,19 +384,67 @@ export async function llmParsePlayerDirective(args: {
     args.directive,
     "",
     "CONTEXT (qualitative only):",
-    JSON.stringify(summarizeWorldForLlm(args.world), null, 2),
+    JSON.stringify(context, null, 2),
     "",
     "Return JSON matching this shape:",
-    JSON.stringify({ actions: [PlayerActionSchema.describe("PlayerAction")._def], rationale: ["string"] }),
+    JSON.stringify(
+      {
+        actions: [
+          {
+            kind: "DIPLOMACY|ECONOMY|MILITARY|INTEL|MEDIA|INSTITUTIONS",
+            subkind: "string",
+            intensity: 2,
+            isPublic: false,
+          },
+        ],
+        rationale: ["string"],
+      },
+      null,
+      2,
+    ),
   ].join("\n");
 
-  const { data, raw } = await chatJson({
-    system,
-    user,
-    schemaName: "LlmParseDirectiveSchema",
-    validate: (obj) => LlmParseDirectiveSchema.parse(obj),
-    temperature: 0.4,
-  });
+  let data: z.infer<typeof LlmParseDirectiveSchema>;
+  let raw: unknown;
+  try {
+    ({ data, raw } = await chatJson({
+      system,
+      user,
+      schemaName: "LlmParseDirectiveSchema",
+      validate: (obj) => LlmParseDirectiveSchema.parse(obj),
+      temperature: 0.25,
+    }));
+  } catch (e) {
+    // Retry with a simpler instruction set (models sometimes choke on schema descriptions).
+    const retrySystem = [
+      "You are converting a player directive into VALID actions.",
+      "Return strict JSON only.",
+      "Do not add extra keys.",
+      "If you are unsure, choose conservative actions that still make progress.",
+      allowed,
+    ].join("\n");
+    const retryUser = [
+      `REMAINING_SLOTS: ${args.remainingSlots}`,
+      "PLAYER_DIRECTIVE:",
+      args.directive,
+      "",
+      "CONTEXT:",
+      JSON.stringify(context, null, 2),
+      "",
+      "IMPORTANT: Your previous attempt failed validation with this error:",
+      (e as Error).message,
+      "",
+      "Return JSON with exactly these keys: actions, rationale",
+    ].join("\n");
+
+    ({ data, raw } = await chatJson({
+      system: retrySystem,
+      user: retryUser,
+      schemaName: "LlmParseDirectiveSchema_retry",
+      validate: (obj) => LlmParseDirectiveSchema.parse(obj),
+      temperature: 0.1,
+    }));
+  }
 
   const actions = data.actions.slice(0, Math.max(0, args.remainingSlots));
   // Validate again (defensive)
@@ -681,6 +743,11 @@ export async function llmGenerateControlRoomView(args: {
     "You MUST NOT contradict the provided canonical turn/country/neighbors/regimeType.",
     "All numeric widgets MUST be within bounds (0-100 for indices; 0..1 for intensities).",
     "Use colors as hex (#RRGGBB). Use 3-8 hotspots, 4-10 signals, 4-14 briefing items.",
+    "Also generate map overlays (clustersByMode) so each mode shows different regions:",
+    "- pressure: where stress is concentrated",
+    "- narrative: where info/propaganda attention is spiking",
+    "- entanglement: where interdependence/leverage ties are tightest",
+    "- sentiment: where attitudes toward the player are most hostile/volatile (red) or friendly (green).",
     "Your output should reflect continuity with prior turns (memory).",
   ].join("\n");
 
@@ -720,6 +787,16 @@ export async function llmGenerateControlRoomView(args: {
         hotspots: [{ id: "string", region: "string", value: 70, trend: "up", color: "#dc2626", why: "optional" }],
         signals: [{ id: "string", label: "string", intensity: 0.4, confidence: "MED", why: "optional" }],
         briefings: [{ id: "string", timestamp: "now", source: "Markets", content: "string" }],
+        map: {
+          homeRegion: { lat: 14.5, lon: 105.0 },
+          clustersByMode: {
+            pressure: [{ id: "home", lat: 14.5, lon: 105.0, intensity: "med", radius: 40, dotCount: 18 }],
+            narrative: [{ id: "info", lat: 22.0, lon: 114.0, intensity: "high", radius: 50, dotCount: 22 }],
+            entanglement: [{ id: "trade", lat: 1.3, lon: 103.8, intensity: "med", radius: 45, dotCount: 16 }],
+            sentiment: [{ id: "hostile-capital", lat: 55.7, lon: 37.6, intensity: "high", radius: 45, dotCount: 20 }],
+          },
+          fogRegions: [{ lat: 20.0, lon: 120.0, radius: 18 }],
+        },
         generatedBy: "llm",
         memory: { previousTurnsUsed: 2, continuityNotes: ["optional"] },
       },

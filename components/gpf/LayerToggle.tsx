@@ -19,7 +19,7 @@ export default function LayerToggle({
   showExposure,
   onShowExposureChange,
 }: LayerToggleProps) {
-  const modes: MapMode[] = ["pressure", "narrative", "entanglement"];
+  const modes: MapMode[] = ["pressure", "narrative", "entanglement", "sentiment"];
 
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">

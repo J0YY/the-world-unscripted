@@ -11,6 +11,7 @@ const modeColors: Record<MapMode, { high: string; med: string; low: string }> = 
   pressure: { high: "#dc2626", med: "#f59e0b", low: "#22c55e" },
   narrative: { high: "#3b82f6", med: "#8b5cf6", low: "#06b6d4" },
   entanglement: { high: "#ec4899", med: "#f97316", low: "#84cc16" },
+  sentiment: { high: "#dc2626", med: "#f59e0b", low: "#22c55e" },
 };
 
 const StaticPixel = memo(({ x, y }: { x: number; y: number }) => (

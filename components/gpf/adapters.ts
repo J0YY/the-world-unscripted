@@ -20,7 +20,7 @@ export type GpfDerived = {
   signals: UiSignal[];
   briefings: UiBriefingItem[];
   homeRegion: GeoPoint;
-  hotspotClusters: HotspotCluster[];
+  hotspotClustersByMode: Record<import("./types").MapMode, HotspotCluster[]>;
   fogRegions: Array<{ lat: number; lon: number; radius: number }>;
 };
 
@@ -118,9 +118,15 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
     ? cr.briefings.map((b) => ({ id: b.id, timestamp: b.timestamp, source: b.source, content: b.content }))
     : briefingsDet;
 
-  const homeRegion = inferHomeRegion(snapshot);
-  const hotspotClusters = deriveClusters(snapshot, homeRegion, pressureIndex, hotspots);
-  const fogRegions = deriveFogRegions(snapshot, homeRegion);
+  const homeRegion = cr?.map?.homeRegion ?? inferHomeRegion(snapshot);
+
+  const clustersPressure =
+    cr?.map?.clustersByMode?.pressure ?? deriveClusters(snapshot, homeRegion, pressureIndex, hotspots);
+  const clustersNarrative = cr?.map?.clustersByMode?.narrative ?? clustersPressure;
+  const clustersEntanglement = cr?.map?.clustersByMode?.entanglement ?? clustersPressure;
+  const clustersSentiment = cr?.map?.clustersByMode?.sentiment ?? clustersPressure;
+
+  const fogRegions = cr?.map?.fogRegions ?? deriveFogRegions(snapshot, homeRegion);
 
   return {
     turn: snapshot.turn,
@@ -133,7 +139,12 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
     signals,
     briefings,
     homeRegion,
-    hotspotClusters,
+    hotspotClustersByMode: {
+      pressure: clustersPressure,
+      narrative: clustersNarrative,
+      entanglement: clustersEntanglement,
+      sentiment: clustersSentiment,
+    },
     fogRegions,
   };
 }

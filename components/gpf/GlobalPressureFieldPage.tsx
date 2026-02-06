@@ -90,7 +90,7 @@ export default function GlobalPressureFieldPage({
               mode={mode}
               intelFog={intelFog}
               showExposure={showExposure}
-              hotspotClusters={derived.hotspotClusters}
+              hotspotClusters={derived.hotspotClustersByMode[mode]}
               homeRegion={derived.homeRegion}
               fogRegions={derived.fogRegions}
             />

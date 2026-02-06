@@ -49,6 +49,98 @@ function extractBeforeWorld(worldState: unknown): WorldState | null {
   return null;
 }
 
+function pickPressureActor(world: WorldState) {
+  const actorList = Object.values(world.actors);
+  actorList.sort((a, b) => {
+    const aScore =
+      (a.postureTowardPlayer === "hostile" ? 2 : a.postureTowardPlayer === "neutral" ? 1 : 0) * 100 +
+      (100 - a.trust) +
+      a.domesticPressure +
+      a.willingnessToEscalate;
+    const bScore =
+      (b.postureTowardPlayer === "hostile" ? 2 : b.postureTowardPlayer === "neutral" ? 1 : 0) * 100 +
+      (100 - b.trust) +
+      b.domesticPressure +
+      b.willingnessToEscalate;
+    return bScore - aScore;
+  });
+  return actorList[0]!;
+}
+
+function fallbackActionsFromDirective(args: {
+  directive: string;
+  world: WorldState;
+  remainingSlots: number;
+}): { actions: PlayerAction[]; rationale: string[] } {
+  const d = args.directive.toLowerCase();
+  const actions: PlayerAction[] = [];
+  const rationale: string[] = [];
+  const pressureActor = pickPressureActor(args.world);
+
+  const isPublic = /\bpublic\b|\bannounce\b|\bon tv\b|\bpress\b/.test(d);
+  const intensity = /\bfull\b|\bmaximum\b|\bmassive\b|\bcrush\b|\binvade\b/.test(d) ? 3 : /\blimited\b|\bquiet\b|\bcovert\b/.test(d) ? 1 : 2;
+
+  const wantIndustry = /\binfrastructure\b|\bindustry\b|\bindustrial\b|\bfactory\b|\binvest\b|\bbuild\b/.test(d);
+  const wantSubsidy = /\bsubsid(y|ies)\b|\bprice cap\b|\bfuel\b|\bfood\b/.test(d);
+  const wantAusterity = /\bausterity\b|\bcut spending\b|\btighten\b/.test(d);
+  const wantAttack = /\battack\b|\bstrike\b|\bbomb\b|\binvade\b|\bannex\b|\bwar\b/.test(d);
+  const wantMobilize = /\bmobiliz(e|ation)\b|\btroops\b|\bdeploy\b|\bposture\b/.test(d);
+  const wantIntel = /\bintel\b|\bspy\b|\bsurveillance\b|\bcounterintel\b|\bcovert\b/.test(d);
+  const wantNarrative = /\bpropaganda\b|\bnarrative\b|\bmedia\b|\bcensor\b/.test(d);
+  const wantReform = /\banti-corruption\b|\breform\b|\bpurge\b|\belection\b/.test(d);
+
+  if (wantIndustry && actions.length < args.remainingSlots) {
+    actions.push({ kind: "ECONOMY", subkind: "INDUSTRIAL_PUSH", intensity, isPublic });
+    rationale.push("Translate infrastructure/industry intent into an industrial push.");
+  }
+  if (wantSubsidy && actions.length < args.remainingSlots) {
+    actions.push({ kind: "ECONOMY", subkind: "SUBSIDIES", intensity: Math.min(3, intensity + 0) as 1 | 2 | 3, isPublic: true });
+    rationale.push("Translate price-stability intent into targeted subsidies.");
+  }
+  if (wantAusterity && actions.length < args.remainingSlots) {
+    actions.push({ kind: "ECONOMY", subkind: "AUSTERITY", intensity: Math.max(1, intensity - 1) as 1 | 2 | 3, isPublic: true });
+    rationale.push("Translate fiscal intent into controlled austerity.");
+  }
+  if ((wantAttack || wantMobilize) && actions.length < args.remainingSlots) {
+    actions.push({
+      kind: "MILITARY",
+      subkind: wantAttack ? "LIMITED_STRIKE" : "MOBILIZE",
+      intensity,
+      isPublic,
+      targetActor: pressureActor.id,
+      targetRegion: "border zone",
+    });
+    rationale.push("Translate coercive intent into a bounded military operation.");
+  }
+  if (wantIntel && actions.length < args.remainingSlots) {
+    actions.push({ kind: "INTEL", subkind: "SURVEILLANCE", intensity: Math.min(3, intensity + 0) as 1 | 2 | 3, isPublic: false, targetActor: pressureActor.id });
+    rationale.push("Translate intelligence intent into surveillance to reduce deception risk.");
+  }
+  if (wantNarrative && actions.length < args.remainingSlots) {
+    actions.push({ kind: "MEDIA", subkind: "NARRATIVE_FRAMING", intensity: Math.max(1, intensity - 0) as 1 | 2 | 3, isPublic: true });
+    rationale.push("Translate narrative intent into disciplined framing.");
+  }
+  if (wantReform && actions.length < args.remainingSlots) {
+    actions.push({ kind: "INSTITUTIONS", subkind: "ANTI_CORRUPTION_DRIVE", intensity: Math.max(1, intensity - 0) as 1 | 2 | 3, isPublic: true });
+    rationale.push("Translate reform intent into an anti-corruption drive.");
+  }
+
+  if (actions.length === 0) {
+    actions.push({
+      kind: "DIPLOMACY",
+      subkind: "MESSAGE",
+      targetActor: pressureActor.id,
+      topic: "sanctions",
+      tone: "firm",
+      intensity: 2,
+      isPublic: false,
+    });
+    rationale.push("Default: send a quiet diplomatic message to the highest-pressure actor.");
+  }
+
+  return { actions: actions.slice(0, args.remainingSlots), rationale };
+}
+
 async function attachControlRoomView(gameId: string, world: WorldState, snapshot: GameSnapshot): Promise<void> {
   if (llmMode() !== "ON") return;
   try {
@@ -269,8 +361,24 @@ export async function submitTurn(
         actions = [...actions, ...parsedDirective.actions].slice(0, 2);
         directiveArtifact = parsedDirective.llmRaw;
       } catch {
-        // Ignore directive on failure; continue with chosen actions.
+        const fallback = fallbackActionsFromDirective({ directive: playerDirective.trim(), world, remainingSlots: remaining });
+        actions = [...actions, ...fallback.actions].slice(0, 2);
+        directiveArtifact = {
+          error: "LLM directive parse failed; used fallback mapping.",
+          fallbackActions: fallback.actions,
+          fallbackRationale: fallback.rationale,
+        };
       }
+    }
+  }
+
+  // If AI is OFF, still map freeform directives into actions (fallback).
+  if (playerDirective?.trim() && llmMode() === "OFF") {
+    const remaining = Math.max(0, 2 - actions.length);
+    if (remaining > 0) {
+      const fallback = fallbackActionsFromDirective({ directive: playerDirective.trim(), world, remainingSlots: remaining });
+      actions = [...actions, ...fallback.actions].slice(0, 2);
+      directiveArtifact = { offlineFallback: true, fallbackActions: fallback.actions, fallbackRationale: fallback.rationale };
     }
   }
 
@@ -458,6 +566,7 @@ export async function getResolutionReport(
   deltas: Array<{ label: string; before: number; after: number; delta: number }>;
   actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
   threats: string[];
+  directiveParseNotes?: string[];
   llm?: unknown;
 }> {
   await ensureDbSchema();
@@ -539,6 +648,23 @@ export async function getResolutionReport(
     deltas,
     actorShifts,
     threats,
+    directiveParseNotes:
+      row.llmArtifacts && typeof row.llmArtifacts === "object"
+        ? (() => {
+            const notes: string[] = [];
+            const art = row.llmArtifacts as unknown as Record<string, unknown>;
+            const dp = art["directiveParse"];
+            if (dp && typeof dp === "object") {
+              if ("error" in (dp as Record<string, unknown>) && typeof (dp as Record<string, unknown>).error === "string") {
+                notes.push(String((dp as Record<string, unknown>).error));
+              }
+              if ("offlineFallback" in (dp as Record<string, unknown>)) {
+                notes.push("AI was offline; used fallback directive→actions mapping.");
+              }
+            }
+            return notes.length ? notes : undefined;
+          })()
+        : undefined,
   };
 
   if (llmMode() !== "ON") return base;

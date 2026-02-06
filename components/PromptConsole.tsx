@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Send, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
 
 type SuggestPayload = {
   situation: { headline: string; keyDevelopments: string[] };
@@ -83,6 +84,42 @@ export function PromptConsole({
 
   return (
     <div className="prompt-console fixed inset-x-0 bottom-0 z-[60] h-[26vh] border-t border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/90 backdrop-blur overflow-hidden">
+      {submitting ? (
+        <motion.div
+          className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.25 }}
+          aria-live="polite"
+        >
+          <div className="w-full max-w-xl px-6">
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/60">Resolving turn</div>
+            <div className="mt-4 text-4xl font-semibold text-white">GENERATING OUTCOME</div>
+            <motion.ul
+              className="mt-5 space-y-2 text-sm text-white/80 font-mono"
+              initial="hidden"
+              animate="show"
+              variants={{ hidden: {}, show: { transition: { staggerChildren: 0.12 } } }}
+            >
+              {[
+                "Interpreting directive…",
+                "Selecting operations…",
+                "Applying second-order effects…",
+                "Updating perceptions…",
+                "Compiling brief…",
+              ].map((t) => (
+                <motion.li key={t} variants={{ hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0 } }}>
+                  - {t}
+                </motion.li>
+              ))}
+            </motion.ul>
+            <div className="mt-6 h-1 w-full bg-white/10 rounded overflow-hidden">
+              <div className="h-full w-1/3 bg-white/60 animate-pulse" />
+            </div>
+            <div className="mt-3 text-xs text-white/50 font-mono">This can take ~10–20 seconds when AI is online.</div>
+          </div>
+        </motion.div>
+      ) : null}
       <div className="mx-auto h-full w-full max-w-[1800px] px-4 md:px-6 py-3 flex flex-col">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
