@@ -35,6 +35,17 @@ export async function apiSubmitTurn(gameId: string, actions: PlayerAction[]): Pr
   });
 }
 
+export async function apiSubmitTurnWithDirective(
+  gameId: string,
+  actions: PlayerAction[],
+  directive: string,
+): Promise<TurnOutcome> {
+  return jsonFetch<TurnOutcome>("/api/game/submit-turn", {
+    method: "POST",
+    body: JSON.stringify({ gameId, actions, directive }),
+  });
+}
+
 export async function apiReset(): Promise<void> {
   await jsonFetch("/api/game/reset", { method: "POST", body: JSON.stringify({}) });
 }

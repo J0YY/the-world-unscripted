@@ -49,6 +49,8 @@ model TurnLog {
   worldState         Json
 
   failure            Json?
+  playerDirective    String?
+  llmArtifacts       Json?
 
   game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 

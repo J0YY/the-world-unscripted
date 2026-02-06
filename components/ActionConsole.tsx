@@ -17,10 +17,11 @@ export function ActionConsole({
 }: {
   templates: ActionTemplate[];
   actionLimit: number;
-  onSubmit: (actions: PlayerAction[]) => Promise<void>;
+  onSubmit: (actions: PlayerAction[], directive: string) => Promise<void>;
 }) {
   const [tab, setTab] = useState<PlayerAction["kind"]>("DIPLOMACY");
   const [selected, setSelected] = useState<PlayerAction[]>([]);
+  const [directive, setDirective] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const byCategory = useMemo(() => {
@@ -51,8 +52,9 @@ export function ActionConsole({
   async function submit() {
     setSubmitting(true);
     try {
-      await onSubmit(selected);
+      await onSubmit(selected, directive);
       setSelected([]);
+      setDirective("");
     } finally {
       setSubmitting(false);
     }
@@ -108,6 +110,21 @@ export function ActionConsole({
             onRemove={() => removeAt(idx)}
           />
         ))}
+      </div>
+
+      <div className="mt-4">
+        <div className="text-xs font-semibold text-white/80">Freeform directive (optional)</div>
+        <div className="mt-1 text-xs text-white/55">
+          Write what you want to do in your own words. If server-side LLM is enabled, it will be translated into
+          additional actions (within your remaining slots) and may influence next turn’s text.
+        </div>
+        <textarea
+          value={directive}
+          onChange={(e) => setDirective(e.target.value)}
+          rows={4}
+          placeholder="Example: Quietly reassure the EU we’ll allow inspections, while preparing a limited mobilization and a targeted subsidy to prevent weekend unrest."
+          className="mt-2 w-full rounded-lg bg-zinc-900 px-3 py-2 text-sm text-white outline-none ring-1 ring-white/10 placeholder:text-white/30"
+        />
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-2">

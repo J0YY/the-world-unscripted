@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "DATABASE_URL=file:./db/unscripted.db next dev",
+    "dev": "DATABASE_URL=file:./db/unscripted.db next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "DATABASE_URL=file:./db/unscripted.db next start --hostname 127.0.0.1",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -17,13 +17,20 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",
+    "clsx": "2.1.1",
+    "d3-geo": "^3.1.1",
+    "framer-motion": "^12.23.25",
+    "lucide-react": "0.555.0",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "tailwind-merge": "3.4.0",
+    "tailwindcss-animate": "1.0.7",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/d3-geo": "^3.1.0",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

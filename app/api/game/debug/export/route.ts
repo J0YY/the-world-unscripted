@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { debugExportTrueState } from "@/db/gameService";
 
+export const runtime = "nodejs";
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);

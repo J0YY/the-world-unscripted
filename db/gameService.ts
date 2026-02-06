@@ -1,6 +1,8 @@
 import { prisma } from "./client";
 import { PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
+import { llmGenerateTurnPackage, llmMode, llmParsePlayerDirective } from "./llm";
+import { ensureDbSchema } from "./ensureDb";
 
 function newSeed(): string {
   // Deterministic engine requires a seed; generation of a *new* seed can be non-deterministic.
@@ -8,8 +10,22 @@ function newSeed(): string {
 }
 
 export async function createGame(seed?: string): Promise<GameSnapshot> {
+  await ensureDbSchema();
   const s = seed?.trim() ? seed.trim() : newSeed();
   const world = createNewGameWorld(s);
+
+  // Optional LLM generation for Turn 1 briefing/events (replaces deterministic turn-start content).
+  let llmArtifact: unknown | undefined;
+  if (llmMode() === "ON") {
+    try {
+      const pkg = await llmGenerateTurnPackage({ world, phase: "TURN_1" });
+      world.current.briefing = pkg.briefing;
+      world.current.incomingEvents = pkg.events;
+      llmArtifact = pkg.llmRaw;
+    } catch {
+      // Fail closed: proceed deterministically without LLM.
+    }
+  }
 
   const game = await prisma.game.create({
     data: {
@@ -28,6 +44,24 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
     data: { lastPlayerSnapshot: snapshot as unknown as object },
   });
 
+  if (llmArtifact) {
+    await prisma.turnLog.create({
+      data: {
+        gameId: game.id,
+        turnNumber: 0,
+        briefingText: world.current.briefing.text,
+        incomingEvents: world.current.incomingEvents as unknown as object,
+        playerActions: [] as unknown as object,
+        publicResolution: "INIT",
+        publicConsequences: [] as unknown as object,
+        signalsUnknown: [] as unknown as object,
+        playerSnapshot: snapshot as unknown as object,
+        worldState: world as unknown as object,
+        failure: undefined,
+      },
+    });
+  }
+
   return snapshot;
 }
 
@@ -45,12 +79,17 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   return game.lastPlayerSnapshot as unknown as GameSnapshot;
 }
 
-export async function submitTurn(gameId: string, actionsInput: unknown): Promise<TurnOutcome> {
+export async function submitTurn(
+  gameId: string,
+  actionsInput: unknown,
+  playerDirective?: string,
+): Promise<TurnOutcome> {
+  await ensureDbSchema();
   const parsed = PlayerActionSchema.array().safeParse(actionsInput);
   if (!parsed.success) {
     throw new Error(`Invalid actions: ${parsed.error.message}`);
   }
-  const actions: PlayerAction[] = parsed.data;
+  let actions: PlayerAction[] = parsed.data;
 
   const game = await prisma.game.findUnique({ where: { id: gameId } });
   if (!game) throw new Error("Game not found");
@@ -60,7 +99,48 @@ export async function submitTurn(gameId: string, actionsInput: unknown): Promise
   const startBriefingText = world.current.briefing.text;
   const startIncomingEvents = world.current.incomingEvents;
 
+  // If the player wrote a directive and LLM is enabled, translate into additional validated actions.
+  let directiveArtifact: unknown | undefined;
+  if (playerDirective?.trim() && llmMode() === "ON") {
+    const remaining = Math.max(0, 2 - actions.length);
+    if (remaining > 0) {
+      try {
+        const parsedDirective = await llmParsePlayerDirective({
+          directive: playerDirective.trim(),
+          world,
+          remainingSlots: remaining,
+        });
+        actions = [...actions, ...parsedDirective.actions].slice(0, 2);
+        directiveArtifact = parsedDirective.llmRaw;
+      } catch {
+        // Ignore directive on failure; continue with chosen actions.
+      }
+    }
+  }
+
   const { world: nextWorld, outcome } = submitTurnAndAdvance(gameId, world, actions);
+
+  // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
+  let llmArtifact: unknown | undefined;
+  if (!outcome.failure && llmMode() === "ON") {
+    try {
+      const pkg = await llmGenerateTurnPackage({
+        world: nextWorld,
+        phase: "TURN_N",
+        playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
+        lastTurnPublicResolution: outcome.publicResolutionText,
+      });
+      nextWorld.current.briefing = pkg.briefing;
+      nextWorld.current.incomingEvents = pkg.events;
+      llmArtifact = pkg.llmRaw;
+    } catch {
+      // Proceed without LLM changes.
+    }
+  }
+
+  // Keep artifacts available for future DB logging without tripping eslint unused checks.
+  void directiveArtifact;
+  void llmArtifact;
 
   // Fill failure timeline from the last 3 turns (if applicable).
   const failure = outcome.failure
@@ -77,12 +157,20 @@ export async function submitTurn(gameId: string, actionsInput: unknown): Promise
         briefingText: startBriefingText,
         incomingEvents: startIncomingEvents as unknown as object,
         playerActions: actions as unknown as object,
+        playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
         publicResolution: finalOutcome.publicResolutionText,
         publicConsequences: finalOutcome.consequences as unknown as object,
         signalsUnknown: finalOutcome.signalsUnknown as unknown as object,
         playerSnapshot: finalOutcome.nextSnapshot as unknown as object,
         worldState: nextWorld as unknown as object,
         failure: finalOutcome.failure ? (finalOutcome.failure as unknown as object) : undefined,
+        llmArtifacts:
+          directiveArtifact || llmArtifact
+            ? ({
+                directiveParse: directiveArtifact ?? null,
+                nextTurnPackage: llmArtifact ?? null,
+              } as unknown as object)
+            : undefined,
       },
     });
 

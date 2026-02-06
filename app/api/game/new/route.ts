@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createGame } from "@/db/gameService";
 
+export const runtime = "nodejs";
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json().catch(() => ({}))) as { seed?: string };

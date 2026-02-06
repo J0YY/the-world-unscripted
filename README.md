@@ -86,3 +86,21 @@ npm test
 ```
 
 Includes a determinism smoke test to ensure **same seed + same actions** produces identical outcomes.
+
+## Optional: LLM mode (dynamic narrative + freeform directives)
+
+This MVP can optionally use an LLM **server-side** to:
+- rewrite each turn’s **briefing + event descriptions** (grounded tone)
+- translate a player **freeform directive** into structured actions (still validated/clamped)
+- optionally inject **one bounded event** per turn (effects are limited and validated)
+
+Enable it by setting:
+
+```bash
+export OPENAI_API_KEY="YOUR_KEY"
+# optional
+export OPENAI_MODEL="gpt-4.1-mini"
+npm run dev
+```
+
+Important: do **not** hardcode keys in code or commit them to git.
