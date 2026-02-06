@@ -491,7 +491,7 @@ function deriveClustersForMode(args: {
     },
   ];
 
-  const eventTypes = snapshot.playerView.incomingEvents.map((e) => e.type);
+  const eventTypes = args.snapshot.playerView.incomingEvents.map((e) => e.type);
   const chosen = new Map<string, HotspotCluster>();
   for (const et of eventTypes) {
     for (const c of catalog) {
