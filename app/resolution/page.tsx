@@ -28,14 +28,14 @@ export default function ResolutionPage() {
         <Card>
           <div className="text-sm font-semibold text-white">Consequences</div>
           <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-white/80">
-            {outcome.consequences.slice(0, 8).map((c) => (
-              <li key={c}>{c}</li>
+            {outcome.consequences.slice(0, 8).map((c, i) => (
+              <li key={`${i}-${c}`}>{c}</li>
             ))}
           </ul>
           <div className="mt-4 text-sm font-semibold text-white">Signals & uncertainties</div>
           <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-white/75">
-            {outcome.signalsUnknown.slice(0, 6).map((s) => (
-              <li key={s}>{s}</li>
+            {outcome.signalsUnknown.slice(0, 6).map((s, i) => (
+              <li key={`${i}-${s}`}>{s}</li>
             ))}
           </ul>
         </Card>

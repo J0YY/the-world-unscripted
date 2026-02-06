@@ -209,6 +209,7 @@ export type GameSnapshot = {
   playerView: PlayerViewState;
   actionLimit: number;
   actionTemplates: ActionTemplate[];
+  llmMode?: "OFF" | "ON";
 };
 
 export type FailureType = "DOMESTIC_OUSTER" | "LOSS_OF_SOVEREIGNTY";

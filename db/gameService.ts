@@ -76,7 +76,9 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
 export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   const game = await prisma.game.findUnique({ where: { id: gameId } });
   if (!game) throw new Error("Game not found");
-  return game.lastPlayerSnapshot as unknown as GameSnapshot;
+  const snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  snapshot.llmMode = llmMode();
+  return snapshot;
 }
 
 export async function submitTurn(
