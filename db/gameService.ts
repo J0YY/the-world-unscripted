@@ -67,6 +67,19 @@ function pickPressureActor(world: WorldState) {
   return actorList[0]!;
 }
 
+function pickTargetActorFromDirective(directive: string, world: WorldState) {
+  const d = directive.toLowerCase();
+  // Try to match explicit actor names mentioned by the user (e.g., "turkey").
+  const entries = Object.entries(world.actors) as Array<[keyof typeof world.actors, (typeof world.actors)[keyof typeof world.actors]]>;
+  for (const [id, actor] of entries) {
+    const name = actor.name.toLowerCase();
+    const tokens = name.split(/\s+/).filter(Boolean);
+    if (tokens.some((t) => t.length >= 4 && d.includes(t))) return id;
+    if (d.includes(name)) return id;
+  }
+  return pickPressureActor(world).id;
+}
+
 function fallbackActionsFromDirective(args: {
   directive: string;
   world: WorldState;
@@ -75,7 +88,7 @@ function fallbackActionsFromDirective(args: {
   const d = args.directive.toLowerCase();
   const actions: PlayerAction[] = [];
   const rationale: string[] = [];
-  const pressureActor = pickPressureActor(args.world);
+  const targetActorId = pickTargetActorFromDirective(args.directive, args.world);
 
   const isPublic = /\bpublic\b|\bannounce\b|\bon tv\b|\bpress\b/.test(d);
   const intensity = /\bfull\b|\bmaximum\b|\bmassive\b|\bcrush\b|\binvade\b/.test(d) ? 3 : /\blimited\b|\bquiet\b|\bcovert\b/.test(d) ? 1 : 2;
@@ -107,13 +120,19 @@ function fallbackActionsFromDirective(args: {
       subkind: wantAttack ? "LIMITED_STRIKE" : "MOBILIZE",
       intensity,
       isPublic,
-      targetActor: pressureActor.id,
+      targetActor: targetActorId,
       targetRegion: "border zone",
     });
     rationale.push("Translate coercive intent into a bounded military operation.");
   }
   if (wantIntel && actions.length < args.remainingSlots) {
-    actions.push({ kind: "INTEL", subkind: "SURVEILLANCE", intensity: Math.min(3, intensity + 0) as 1 | 2 | 3, isPublic: false, targetActor: pressureActor.id });
+    actions.push({
+      kind: "INTEL",
+      subkind: "SURVEILLANCE",
+      intensity: Math.min(3, intensity + 0) as 1 | 2 | 3,
+      isPublic: false,
+      targetActor: targetActorId,
+    });
     rationale.push("Translate intelligence intent into surveillance to reduce deception risk.");
   }
   if (wantNarrative && actions.length < args.remainingSlots) {
@@ -129,13 +148,13 @@ function fallbackActionsFromDirective(args: {
     actions.push({
       kind: "DIPLOMACY",
       subkind: "MESSAGE",
-      targetActor: pressureActor.id,
+      targetActor: targetActorId,
       topic: "sanctions",
       tone: "firm",
       intensity: 2,
       isPublic: false,
     });
-    rationale.push("Default: send a quiet diplomatic message to the highest-pressure actor.");
+    rationale.push("Default: send a quiet diplomatic message to the most relevant pressure actor.");
   }
 
   return { actions: actions.slice(0, args.remainingSlots), rationale };
@@ -343,7 +362,9 @@ export async function submitTurn(
   if (game.status === "FAILED") throw new Error("Game already ended");
 
   const world = game.worldState as unknown as WorldState;
-  const snapshotBefore = getPlayerSnapshot(gameId, world, "ACTIVE");
+  // The engine mutates `world` in place. Capture an immutable before-state for logging and resolution diffs.
+  const worldBefore = structuredClone(world) as WorldState;
+  const snapshotBefore = getPlayerSnapshot(gameId, worldBefore, "ACTIVE");
   const startBriefingText = world.current.briefing.text;
   const startIncomingEvents = world.current.incomingEvents;
 
@@ -436,6 +457,10 @@ export async function submitTurn(
   // Optional LLM-generated control-room view model for the *next* snapshot.
   await attachControlRoomView(gameId, nextWorld, finalOutcome.nextSnapshot);
 
+  // Capture after-state for logging. Must be cloned because `nextWorld` continues to be mutated (LLM turn package, etc.)
+  const worldAfter = structuredClone(nextWorld) as WorldState;
+  const snapshotAfter = structuredClone(finalOutcome.nextSnapshot) as GameSnapshot;
+
   await prisma.$transaction(async (tx) => {
     await tx.turnLog.create({
       data: {
@@ -448,8 +473,8 @@ export async function submitTurn(
         publicResolution: finalOutcome.publicResolutionText,
         publicConsequences: finalOutcome.consequences as unknown as object,
         signalsUnknown: finalOutcome.signalsUnknown as unknown as object,
-        playerSnapshot: { before: snapshotBefore, after: finalOutcome.nextSnapshot } as unknown as object,
-        worldState: { before: world, after: nextWorld } as unknown as object,
+        playerSnapshot: { before: snapshotBefore, after: snapshotAfter } as unknown as object,
+        worldState: { before: worldBefore, after: worldAfter } as unknown as object,
         failure: finalOutcome.failure ? (finalOutcome.failure as unknown as object) : undefined,
         llmArtifacts:
           directiveArtifact || llmArtifact
