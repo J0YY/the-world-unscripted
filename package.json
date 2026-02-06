@@ -3,15 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "DATABASE_URL=file:./db/unscripted.db next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "postinstall": "npm run db:generate",
+    "db:generate": "DATABASE_URL=file:./db/unscripted.db prisma generate",
+    "db:setup": "DATABASE_URL=file:./db/unscripted.db prisma migrate deploy && npm run db:generate",
+    "db:migrate": "DATABASE_URL=file:./db/unscripted.db prisma migrate dev",
+    "db:studio": "DATABASE_URL=file:./db/unscripted.db prisma studio"
   },
   "dependencies": {
+    "@prisma/client": "^6.19.2",
     "next": "16.1.6",
     "react": "19.2.3",
-    "react-dom": "19.2.3"
+    "react-dom": "19.2.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -20,7 +29,12 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "prisma": "^6.19.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
+  },
+  "prisma": {
+    "schema": "db/prisma/schema.prisma"
   }
 }

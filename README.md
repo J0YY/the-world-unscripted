@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# The Unscripted World Order (MVP)
 
-## Getting Started
+A **serious, grounded** turn-based geopolitical simulation. You are President of a fictional country operating inside the **real** international system (UN/IMF-style pressure, sanctions logic, alliance dynamics). You never see truth—only **estimates + confidence**.
 
-First, run the development server:
+Failure is explicit:
+- **Domestic ouster**: legitimacy collapse + elite fracture / unrest / loyalty failure
+- **Loss of sovereignty**: annexation/protectorate dynamics (capital control / sovereignty integrity collapse)
+
+War is permitted and can be attractive—but it carries compounding systemic costs.
+
+## Run locally
+
+### Prereqs
+- Node 20+
+
+### Commands
 
 ```bash
+npm install
+npm run db:setup
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Reset
+- Use the **Reset Simulation** button on the Start screen (deletes all local games + turn logs).
+- Or call `POST /api/game/reset`.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Architecture (3 layers)
 
-## Learn More
+### A) Simulation Engine (UI-agnostic)
+- Location: `engine/`
+- Pure TypeScript, deterministic when seeded
+- Owns:
+  - **True** `WorldState`
+  - Player-facing **noisy** `GameSnapshot` (`PlayerViewState` with confidence)
+  - Turn pipeline: briefing → events → actions → resolution → delayed consequences → drift → failure detection
 
-To learn more about Next.js, take a look at the following resources:
+Key entrypoints:
+- `engine/createNewGameWorld(seed)`
+- `engine/submitTurnAndAdvance(gameId, world, actions)`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### B) Persistence layer (SQLite via Prisma)
+- Location: `db/`
+- Prisma schema: `db/prisma/schema.prisma`
+- Stores:
+  - full **true state per turn** (`TurnLog.worldState`)
+  - last **player snapshot** (`Game.lastPlayerSnapshot`)
+  - briefing/events/actions/outcome log
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### C) UI layer (Next.js App Router)
+- Location: `app/` + `components/`
+- Renders **player snapshots only** (never true state)
+- Screens:
+  - Start (`/`)
+  - Country Profile (`/country`)
+  - Main Control Room (`/game`)
+  - Resolution (`/resolution`)
+  - Failure (`/failure`)
 
-## Deploy on Vercel
+## Where to change content
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- **Incoming events**: `engine/events.ts`
+- **Briefing tone/content**: `engine/briefing.ts`
+- **Action effects + war logic**: `engine/resolve.ts` and `engine/drift.ts`
+- **Failure thresholds**: `engine/failure.ts`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Debug: export true state (server-only, behind a flag)
+
+Set an env var when running dev:
+
+```bash
+ENABLE_DEBUG_EXPORT=true npm run dev
+```
+
+Then call:
+- `GET /api/game/debug/export?gameId=...`
+
+This returns true world state + full turn history (for debugging / balancing). Do not expose this in production.
+
+## Minimal tests
+
+```bash
+npm test
+```
+
+Includes a determinism smoke test to ensure **same seed + same actions** produces identical outcomes.

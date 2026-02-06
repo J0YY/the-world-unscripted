@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum GameStatus {
+  ACTIVE
+  FAILED
+}
+
+model Game {
+  id                String     @id @default(cuid())
+  seed              String
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+  currentTurn       Int
+  status            GameStatus @default(ACTIVE)
+  playerCountryName String
+
+  /// Player-facing snapshot for fast UI loads. This MUST NOT contain true state.
+  lastPlayerSnapshot Json
+  /// True world state at the *start* of the current turn. Never return this to UI.
+  worldState         Json
+
+  turns TurnLog[]
+}
+
+model TurnLog {
+  id                 String   @id @default(cuid())
+  gameId             String
+  turnNumber         Int
+  createdAt          DateTime @default(now())
+
+  briefingText       String
+  incomingEvents     Json
+  playerActions      Json
+  publicResolution   String
+  publicConsequences Json
+  signalsUnknown     Json
+
+  /// Player-facing snapshot after resolution of this turn.
+  playerSnapshot     Json
+
+  /// True world state after resolution of this turn (debug + determinism).
+  worldState         Json
+
+  failure            Json?
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, turnNumber])
+  @@index([gameId, turnNumber])
+}
+
