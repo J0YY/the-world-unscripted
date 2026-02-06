@@ -513,6 +513,7 @@ export async function submitTurn(
 }
 
 export async function resetAllGames(): Promise<void> {
+  await ensureDbSchema();
   await prisma.$transaction([prisma.turnLog.deleteMany({}), prisma.game.deleteMany({})]);
 }
 
