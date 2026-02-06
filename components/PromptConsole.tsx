@@ -17,6 +17,7 @@ export function PromptConsole({
   disabled,
   onSubmitDirective,
   turnLabel,
+  autoSuggest = false,
   canGoPrev,
   canGoNext,
   onPrev,
@@ -27,6 +28,7 @@ export function PromptConsole({
   disabled?: boolean;
   onSubmitDirective: (directive: string) => Promise<void>;
   turnLabel: string;
+  autoSuggest?: boolean;
   canGoPrev: boolean;
   canGoNext: boolean;
   onPrev: () => void;
@@ -66,10 +68,12 @@ export function PromptConsole({
   }
 
   useEffect(() => {
-    // Refresh when turn changes (or when console becomes active).
+    // Don't auto-burn credits. Only auto-fetch when explicitly enabled.
+    if (!autoSuggest) return;
+    if (disabled) return;
     void refreshSuggestions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId, turnLabel, llmMode]);
+  }, [autoSuggest, disabled, gameId, turnLabel, llmMode]);
 
   async function submit() {
     if (!directive.trim() || submitting || disabled) return;
@@ -173,7 +177,9 @@ export function PromptConsole({
             ) : suggestErr ? (
               <div className="text-xs font-mono text-[var(--ds-red-700)]">Suggestions error: {suggestErr}</div>
             ) : !suggest ? (
-              <div className="text-xs font-mono text-[var(--ds-gray-700)]">Generating suggestions…</div>
+              <div className="text-xs font-mono text-[var(--ds-gray-700)]">
+                Click <span className="font-semibold">Suggestions</span> to generate AI directives.
+              </div>
             ) : (
               <div className="space-y-3">
                 <div>

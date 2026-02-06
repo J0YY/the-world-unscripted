@@ -92,6 +92,7 @@ export default function GameControlRoomPage() {
           disabled={turnIdx >= 0 && turnIdx < turns.length - 1}
           onSubmitDirective={onSubmitDirective}
           turnLabel={`Turn ${snap.turn}`}
+          autoSuggest={false}
           canGoPrev={turnIdx > 0}
           canGoNext={turnIdx >= 0 && turnIdx < turns.length - 1}
           onPrev={() => viewTurnAt(Math.max(0, turnIdx - 1))}

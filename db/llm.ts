@@ -618,6 +618,7 @@ export async function llmSuggestDirectives(args: { world: WorldState }): Promise
     "Keep suggestions actionable and phrased as directives the player can type.",
     "No raw numbers or scores. Use qualitative language (low/moderate/high/critical) if needed.",
     "Do not contradict the provided context.",
+    "HARD LIMITS: suggestions must be 3-7 items. keyDevelopments must be 2-6 items. redFlags up to 6. questions up to 5. Do not exceed these counts.",
   ].join("\n");
 
   const context = summarizeWorldForLlm(args.world);
@@ -642,7 +643,27 @@ export async function llmSuggestDirectives(args: { world: WorldState }): Promise
     system,
     user,
     schemaName: "LlmSuggestDirectiveSchema",
-    validate: (obj) => LlmSuggestDirectiveSchema.parse(obj),
+    validate: (obj) => {
+      // Be forgiving on count overruns (common LLM failure mode). Truncate, then validate.
+      if (typeof obj !== "object" || obj === null) return LlmSuggestDirectiveSchema.parse(obj);
+      const o = obj as Record<string, unknown>;
+      const situation = (typeof o.situation === "object" && o.situation !== null ? (o.situation as Record<string, unknown>) : {}) as Record<
+        string,
+        unknown
+      >;
+      const keyDevelopments = Array.isArray(situation.keyDevelopments) ? situation.keyDevelopments.slice(0, 6) : situation.keyDevelopments;
+      const suggestions = Array.isArray(o.suggestions) ? o.suggestions.slice(0, 7) : o.suggestions;
+      const redFlags = Array.isArray(o.redFlags) ? o.redFlags.slice(0, 6) : o.redFlags;
+      const questions = Array.isArray(o.questions) ? o.questions.slice(0, 5) : o.questions;
+      const normalized = {
+        ...o,
+        situation: { ...situation, keyDevelopments },
+        suggestions,
+        redFlags,
+        questions,
+      };
+      return LlmSuggestDirectiveSchema.parse(normalized);
+    },
     temperature: 0.6,
   });
 

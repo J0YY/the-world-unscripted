@@ -5,6 +5,11 @@ import type { WorldState } from "@/engine";
 
 export const runtime = "nodejs";
 
+declare global {
+  var __twuoSuggestInflight: Map<string, Promise<unknown>> | undefined;
+  var __twuoSuggestCache: Map<string, { ts: number; data: unknown }> | undefined;
+}
+
 export async function POST(req: Request) {
   try {
     if (llmMode() === "OFF") {
@@ -18,8 +23,31 @@ export async function POST(req: Request) {
     if (!game) return NextResponse.json({ error: "Game not found" }, { status: 404 });
 
     const world = game.worldState as unknown as WorldState;
-    const out = await llmSuggestDirectives({ world });
-    return NextResponse.json(out.data);
+
+    const key = `${body.gameId}:${world.turn}`;
+    const cache = (globalThis.__twuoSuggestCache ??= new Map<string, { ts: number; data: unknown }>());
+    const hit = cache.get(key);
+    if (hit && Date.now() - hit.ts < 2 * 60 * 1000) {
+      return NextResponse.json(hit.data);
+    }
+
+    const inflight = (globalThis.__twuoSuggestInflight ??= new Map<string, Promise<unknown>>());
+    const existing = inflight.get(key);
+    if (existing) {
+      const data = await existing;
+      return NextResponse.json(data);
+    }
+
+    const p = llmSuggestDirectives({ world })
+      .then((out) => out.data)
+      .then((data) => {
+        cache.set(key, { ts: Date.now(), data });
+        return data;
+      })
+      .finally(() => inflight.delete(key));
+    inflight.set(key, p);
+    const data = await p;
+    return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 });
   }
