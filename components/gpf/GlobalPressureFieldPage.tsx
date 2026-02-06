@@ -38,7 +38,7 @@ export default function GlobalPressureFieldPage({
       <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-xl md:text-2xl font-mono font-medium text-[var(--ds-gray-1000)] m-0">
-            Global Pressure Field
+            THE CONTROL ROOM
           </h1>
           <p className="text-xs md:text-sm text-[var(--ds-gray-900)] m-0 mt-1">
             Perception-layer map (signals are incomplete and delayed)
