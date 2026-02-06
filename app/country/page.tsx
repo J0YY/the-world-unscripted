@@ -50,6 +50,15 @@ export default function CountryProfilePage() {
             <Stat label="Industrial base" value={c.resources.industrialBase} />
           </div>
           <div className="mt-4">
+            <div className="text-xs font-semibold text-white/75">Starting assessment</div>
+            <div className="mt-2 grid grid-cols-2 gap-3 text-sm text-white/80">
+              <Signal label="Economic stability" level={c.startingAssessment.economicStability.level} conf={c.startingAssessment.economicStability.confidence} />
+              <Signal label="Legitimacy" level={c.startingAssessment.legitimacy.level} conf={c.startingAssessment.legitimacy.confidence} />
+              <Signal label="Unrest" level={c.startingAssessment.unrest.level} conf={c.startingAssessment.unrest.confidence} />
+              <Signal label="Intel clarity" level={c.startingAssessment.intelClarity.level} conf={c.startingAssessment.intelClarity.confidence} />
+            </div>
+          </div>
+          <div className="mt-4">
             <div className="text-xs font-semibold text-white/75">Key vulnerabilities</div>
             <ul className="mt-2 list-disc pl-5 text-sm text-white/75">
               {c.vulnerabilities.map((v) => (
@@ -67,11 +76,23 @@ export default function CountryProfilePage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-white/10 bg-black/30 p-3">
       <div className="text-xs text-white/60">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-white">{value}</div>
+      <div className="mt-1 text-lg font-semibold text-white uppercase">{value}</div>
+    </div>
+  );
+}
+
+function Signal({ label, level, conf }: { label: string; level: string; conf: "low" | "med" | "high" }) {
+  return (
+    <div className="rounded-lg border border-white/10 bg-black/30 p-3">
+      <div className="text-xs text-white/60">{label}</div>
+      <div className="mt-1 flex items-center justify-between gap-3">
+        <div className="text-sm font-semibold text-white uppercase">{level}</div>
+        <div className="text-xs text-white/50">conf {conf}</div>
+      </div>
     </div>
   );
 }

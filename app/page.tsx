@@ -254,10 +254,10 @@ export default function LandingPage() {
                 <div className="border border-border/40 bg-card/50 p-6">
                   <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Starting assessment</div>
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <DossierSignal label="Economic stability" m={snap.playerView.indicators.economicStability} />
-                    <DossierSignal label="Legitimacy" m={snap.playerView.indicators.legitimacy} />
-                    <DossierSignal label="Unrest" m={snap.playerView.indicators.unrestLevel} invert />
-                    <DossierSignal label="Intel clarity" m={snap.playerView.indicators.intelligenceClarity} />
+                    <DossierSignal label="Economic stability" s={snap.countryProfile.startingAssessment.economicStability} />
+                    <DossierSignal label="Legitimacy" s={snap.countryProfile.startingAssessment.legitimacy} />
+                    <DossierSignal label="Unrest" s={snap.countryProfile.startingAssessment.unrest} />
+                    <DossierSignal label="Intel clarity" s={snap.countryProfile.startingAssessment.intelClarity} />
                   </div>
 
                   <div className="mt-8 font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
@@ -396,39 +396,30 @@ export default function LandingPage() {
   );
 }
 
-function bucket100(v: number): "critical" | "low" | "moderate" | "high" {
-  if (v >= 75) return "high";
-  if (v >= 55) return "moderate";
-  if (v >= 35) return "low";
-  return "critical";
-}
-
-function DossierStat({ label, value }: { label: string; value: number }) {
+function DossierStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded border border-border/40 bg-background/40 px-3 py-2">
       <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-muted-foreground">{label}</div>
-      <div className="mt-1 text-xs font-mono text-foreground/90">{bucket100(value)}</div>
+      <div className="mt-1 text-xs font-mono text-foreground/90 uppercase">{value}</div>
     </div>
   );
 }
 
 function DossierSignal({
   label,
-  m,
-  invert,
+  s,
 }: {
   label: string;
-  m: { estimatedValue: number; confidence: "low" | "med" | "high" };
-  invert?: boolean;
+  s: { level: string; confidence: "low" | "med" | "high"; note?: string };
 }) {
-  const level = bucket100(invert ? 100 - m.estimatedValue : m.estimatedValue);
   return (
     <div className="rounded border border-border/40 bg-background/40 px-3 py-2">
       <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-muted-foreground">{label}</div>
       <div className="mt-1 flex items-center justify-between gap-3 text-xs font-mono text-foreground/90">
-        <span className="uppercase">{level}</span>
-        <span className="text-muted-foreground">conf {m.confidence}</span>
+        <span className="uppercase">{s.level}</span>
+        <span className="text-muted-foreground">conf {s.confidence}</span>
       </div>
+      {s.note ? <div className="mt-1 text-[10px] font-mono text-muted-foreground/90">{s.note}</div> : null}
     </div>
   );
 }

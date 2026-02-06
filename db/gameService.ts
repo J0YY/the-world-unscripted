@@ -1,7 +1,7 @@
 import { prisma } from "./client";
 import { PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
-import { llmGenerateTurnPackage, llmMode, llmParsePlayerDirective } from "./llm";
+import { llmGenerateCountryProfile, llmGenerateTurnPackage, llmMode, llmParsePlayerDirective } from "./llm";
 import { ensureDbSchema } from "./ensureDb";
 
 function newSeed(): string {
@@ -39,6 +39,27 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
   });
 
   const snapshot = getPlayerSnapshot(game.id, world, "ACTIVE");
+
+  // Optional LLM-generated dossier (player-facing country profile). Fail closed to deterministic profile.
+  if (llmMode() === "ON") {
+    try {
+      const ind = snapshot.playerView.indicators;
+      const dossier = await llmGenerateCountryProfile({
+        world,
+        indicators: {
+          economicStability: ind.economicStability,
+          legitimacy: ind.legitimacy,
+          unrestLevel: ind.unrestLevel,
+          intelligenceClarity: ind.intelligenceClarity,
+        },
+      });
+      snapshot.countryProfile = dossier.countryProfile;
+      llmArtifact = llmArtifact ? { ...(llmArtifact as object), countryProfile: dossier.llmRaw } : { countryProfile: dossier.llmRaw };
+    } catch {
+      // Ignore: keep deterministic dossier.
+    }
+  }
+
   await prisma.game.update({
     where: { id: game.id },
     data: { lastPlayerSnapshot: snapshot as unknown as object },
@@ -150,6 +171,26 @@ export async function submitTurn(
     : undefined;
 
   const finalOutcome: TurnOutcome = failure ? { ...outcome, failure } : outcome;
+
+  // Optional LLM-generated dossier refresh for the *next* snapshot.
+  if (llmMode() === "ON") {
+    try {
+      const ind = finalOutcome.nextSnapshot.playerView.indicators;
+      const dossier = await llmGenerateCountryProfile({
+        world: nextWorld,
+        indicators: {
+          economicStability: ind.economicStability,
+          legitimacy: ind.legitimacy,
+          unrestLevel: ind.unrestLevel,
+          intelligenceClarity: ind.intelligenceClarity,
+        },
+      });
+      finalOutcome.nextSnapshot.countryProfile = dossier.countryProfile;
+      llmArtifact = llmArtifact ? { ...(llmArtifact as object), countryProfile: dossier.llmRaw } : { countryProfile: dossier.llmRaw };
+    } catch {
+      // Ignore: keep deterministic dossier.
+    }
+  }
 
   await prisma.$transaction(async (tx) => {
     await tx.turnLog.create({

@@ -1,6 +1,6 @@
-import type { IncomingEvent, PlayerAction, WorldState } from "@/engine";
+import type { CountryProfile, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
-import { LlmGenerateTurnPackageSchema, LlmParseDirectiveSchema, LlmRewriteTurnSchema } from "./llmSchemas";
+import { LlmCountryProfileSchema, LlmGenerateTurnPackageSchema, LlmParseDirectiveSchema, LlmRewriteTurnSchema } from "./llmSchemas";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
@@ -411,6 +411,123 @@ export async function llmAgentChat(args: {
     user,
     temperature: 0.7,
   });
+}
+
+function dossierLevel(v: number): "critical" | "low" | "moderate" | "high" {
+  if (v >= 75) return "high";
+  if (v >= 55) return "moderate";
+  if (v >= 35) return "low";
+  return "critical";
+}
+
+function dossierSignalFromEstimated(
+  estimatedValue: number,
+  confidence: "low" | "med" | "high",
+  opts?: { invert?: boolean },
+) {
+  const inv = opts?.invert ? 100 - estimatedValue : estimatedValue;
+  return { level: dossierLevel(inv), confidence };
+}
+
+export async function llmGenerateCountryProfile(args: {
+  world: WorldState;
+  indicators: {
+    economicStability: { estimatedValue: number; confidence: "low" | "med" | "high" };
+    legitimacy: { estimatedValue: number; confidence: "low" | "med" | "high" };
+    unrestLevel: { estimatedValue: number; confidence: "low" | "med" | "high" };
+    intelligenceClarity: { estimatedValue: number; confidence: "low" | "med" | "high" };
+  };
+}): Promise<{ countryProfile: CountryProfile; llmRaw: unknown }> {
+  const p = args.world.player;
+
+  const canon = {
+    name: p.name,
+    neighbors: p.neighbors,
+    regimeType: p.regimeType,
+  };
+
+  const system = [
+    "You are producing a concise but thorough initial country dossier for a geopolitical simulation game.",
+    "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
+    "You MUST match the provided canonical fields exactly: name, neighbors (same order), regimeType.",
+    "Do NOT output raw numbers (no scores, no 0-100 values). Use only qualitative levels: critical, low, moderate, high.",
+    "Write geographySummary as 2–4 sentences, grounded and specific (no fantasy).",
+    "Vulnerabilities must be concrete, actionable, and phrased as intelligence-style risk statements.",
+    "Fill startingAssessment consistently with the provided qualitative signal context (you may add a short note per signal).",
+  ].join("\n");
+
+  const context = summarizeWorldForLlm(args.world);
+  const user = [
+    "CANONICAL (must match exactly):",
+    JSON.stringify(canon, null, 2),
+    "",
+    "QUALITATIVE CONTEXT:",
+    JSON.stringify(
+      {
+        ...context,
+        player: {
+          ...context.player,
+          resources: {
+            oilGas: dossierLevel(p.resources.oilGas),
+            food: dossierLevel(p.resources.food),
+            rareEarths: dossierLevel(p.resources.rareEarths),
+            industrialBase: dossierLevel(p.resources.industrialBase),
+          },
+          startingSignals: {
+            economicStability: dossierSignalFromEstimated(
+              args.indicators.economicStability.estimatedValue,
+              args.indicators.economicStability.confidence,
+            ),
+            legitimacy: dossierSignalFromEstimated(args.indicators.legitimacy.estimatedValue, args.indicators.legitimacy.confidence),
+            unrest: dossierSignalFromEstimated(args.indicators.unrestLevel.estimatedValue, args.indicators.unrestLevel.confidence, {
+              invert: true,
+            }),
+            intelClarity: dossierSignalFromEstimated(
+              args.indicators.intelligenceClarity.estimatedValue,
+              args.indicators.intelligenceClarity.confidence,
+            ),
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "",
+    "Return JSON matching this shape (example keys/types):",
+    JSON.stringify(
+      {
+        name: canon.name,
+        geographySummary: "2–4 sentences (string)",
+        neighbors: canon.neighbors,
+        regimeType: canon.regimeType,
+        resources: { oilGas: "low", food: "moderate", rareEarths: "critical", industrialBase: "high" },
+        startingAssessment: {
+          economicStability: { level: "moderate", confidence: "med", note: "short optional note" },
+          legitimacy: { level: "low", confidence: "med", note: "short optional note" },
+          unrest: { level: "moderate", confidence: "low", note: "short optional note" },
+          intelClarity: { level: "low", confidence: "med", note: "short optional note" },
+        },
+        vulnerabilities: ["string", "string", "string", "string"],
+        generatedBy: "llm",
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const { data, raw } = await chatJson({
+    system,
+    user,
+    schemaName: "LlmCountryProfileSchema",
+    validate: (obj) => LlmCountryProfileSchema.parse(obj),
+    temperature: 0.6,
+  });
+
+  if (data.name !== canon.name) throw new Error("LLM countryProfile mismatch: name");
+  if (data.regimeType !== canon.regimeType) throw new Error("LLM countryProfile mismatch: regimeType");
+  if (data.neighbors.join("|") !== canon.neighbors.join("|")) throw new Error("LLM countryProfile mismatch: neighbors");
+
+  return { countryProfile: data as unknown as CountryProfile, llmRaw: raw };
 }
 
 function summarizeWorldForLlm(world: WorldState) {

@@ -14,6 +14,14 @@ export type Posture = "hostile" | "neutral" | "friendly";
 
 export type RegimeType = "hybrid" | "democracy" | "authoritarian";
 
+export type DossierLevel = "critical" | "low" | "moderate" | "high";
+
+export type DossierSignal = {
+  level: DossierLevel;
+  confidence: Confidence;
+  note?: string;
+};
+
 export type ExternalActorState = {
   id: ActorId;
   name: string;
@@ -197,8 +205,20 @@ export type CountryProfile = {
   geographySummary: string;
   neighbors: string[];
   regimeType: RegimeType;
-  resources: PlayerCountryTrue["resources"];
+  resources: {
+    oilGas: DossierLevel;
+    food: DossierLevel;
+    rareEarths: DossierLevel;
+    industrialBase: DossierLevel;
+  };
+  startingAssessment: {
+    economicStability: DossierSignal;
+    legitimacy: DossierSignal;
+    unrest: DossierSignal;
+    intelClarity: DossierSignal;
+  };
   vulnerabilities: string[];
+  generatedBy: "llm" | "deterministic";
 };
 
 export type GameSnapshot = {

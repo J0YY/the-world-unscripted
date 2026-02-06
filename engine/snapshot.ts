@@ -2,7 +2,10 @@ import type {
   ActionTemplate,
   ActorId,
   CountryProfile,
+  DossierLevel,
+  DossierSignal,
   GameSnapshot,
+  ObservedMetric,
   PlayerIncomingEvent,
   WorldState,
 } from "./types";
@@ -11,7 +14,25 @@ import { clamp100 } from "./math";
 
 const ACTION_LIMIT = 2;
 
-export function buildCountryProfile(world: WorldState): CountryProfile {
+function dossierLevel(v: number): DossierLevel {
+  if (v >= 75) return "high";
+  if (v >= 55) return "moderate";
+  if (v >= 35) return "low";
+  return "critical";
+}
+
+function dossierSignal(m: ObservedMetric, opts?: { invert?: boolean; note?: string }): DossierSignal {
+  const inv = opts?.invert ? 100 - m.estimatedValue : m.estimatedValue;
+  return { level: dossierLevel(inv), confidence: m.confidence, note: opts?.note };
+}
+
+export function buildCountryProfile(
+  world: WorldState,
+  indicators: Pick<
+    GameSnapshot["playerView"]["indicators"],
+    "economicStability" | "legitimacy" | "unrestLevel" | "intelligenceClarity"
+  >,
+): CountryProfile {
   const p = world.player;
   const vulnerabilities: string[] = [];
   if (p.economy.debtStress >= 60) vulnerabilities.push("Debt refinancing risk; external financing leverage is real.");
@@ -32,8 +53,20 @@ export function buildCountryProfile(world: WorldState): CountryProfile {
     geographySummary: p.geographySummary,
     neighbors: p.neighbors,
     regimeType: p.regimeType,
-    resources: p.resources,
+    resources: {
+      oilGas: dossierLevel(p.resources.oilGas),
+      food: dossierLevel(p.resources.food),
+      rareEarths: dossierLevel(p.resources.rareEarths),
+      industrialBase: dossierLevel(p.resources.industrialBase),
+    },
+    startingAssessment: {
+      economicStability: dossierSignal(indicators.economicStability),
+      legitimacy: dossierSignal(indicators.legitimacy),
+      unrest: dossierSignal(indicators.unrestLevel, { invert: true }),
+      intelClarity: dossierSignal(indicators.intelligenceClarity),
+    },
     vulnerabilities: vulnerabilities.slice(0, 6),
+    generatedBy: "deterministic",
   };
 }
 
@@ -129,36 +162,40 @@ export function buildSnapshot(gameId: string, world: WorldState, status: "ACTIVE
   const warTrue = warStatusTrue(world);
   const intelClarityTrue = clamp100(p.institutions.intelligenceServices - (world.conflicts.length > 0 ? 10 : 0));
 
+  const indicators = {
+    legitimacy: observeMetric(world, p.politics.legitimacy, { scale: 100, drivers: drivers.legitimacy }),
+    publicApproval: observeMetric(world, p.politics.publicApproval, { scale: 100, drivers: drivers.approval }),
+    eliteCohesion: observeMetric(world, p.politics.eliteCohesion, { scale: 100, drivers: drivers.elite }),
+    militaryLoyalty: observeMetric(world, p.politics.militaryLoyalty, { scale: 100, drivers: drivers.mil }),
+    economicStability: observeMetric(world, p.economy.economicStability, { scale: 100, drivers: drivers.econ }),
+    inflationPressure: observeMetric(world, p.economy.inflationPressure, { scale: 100, drivers: drivers.inflation }),
+    unrestLevel: observeMetric(world, p.politics.unrest, { scale: 100, drivers: drivers.unrest }),
+    intelligenceClarity: observeMetric(world, intelClarityTrue, {
+      scale: 100,
+      drivers: drivers.intel,
+      extraUncertainty: world.conflicts.length > 0 ? 0.25 : 0,
+    }),
+    internationalCredibility: observeMetric(world, p.politics.credibilityGlobal, { scale: 100, drivers: drivers.cred }),
+    sovereigntyIntegrity: observeMetric(world, p.politics.sovereigntyIntegrity, { scale: 100, drivers: drivers.sov }),
+    warStatus: observeMetric(world, warTrue, {
+      scale: 100,
+      drivers: drivers.war,
+      extraUncertainty: world.conflicts.length > 0 ? 0.35 : 0.1,
+    }),
+  };
+
   return {
     gameId,
     turn: world.turn,
     status,
-    countryProfile: buildCountryProfile(world),
+    countryProfile: buildCountryProfile(world, indicators),
     actionLimit: ACTION_LIMIT,
     actionTemplates: defaultActionTemplates(world),
     playerView: {
       briefing: world.current.briefing,
       incomingEvents: sanitizeEvents(world),
       indicators: {
-        legitimacy: observeMetric(world, p.politics.legitimacy, { scale: 100, drivers: drivers.legitimacy }),
-        publicApproval: observeMetric(world, p.politics.publicApproval, { scale: 100, drivers: drivers.approval }),
-        eliteCohesion: observeMetric(world, p.politics.eliteCohesion, { scale: 100, drivers: drivers.elite }),
-        militaryLoyalty: observeMetric(world, p.politics.militaryLoyalty, { scale: 100, drivers: drivers.mil }),
-        economicStability: observeMetric(world, p.economy.economicStability, { scale: 100, drivers: drivers.econ }),
-        inflationPressure: observeMetric(world, p.economy.inflationPressure, { scale: 100, drivers: drivers.inflation }),
-        unrestLevel: observeMetric(world, p.politics.unrest, { scale: 100, drivers: drivers.unrest }),
-        intelligenceClarity: observeMetric(world, intelClarityTrue, {
-          scale: 100,
-          drivers: drivers.intel,
-          extraUncertainty: world.conflicts.length > 0 ? 0.25 : 0,
-        }),
-        internationalCredibility: observeMetric(world, p.politics.credibilityGlobal, { scale: 100, drivers: drivers.cred }),
-        sovereigntyIntegrity: observeMetric(world, p.politics.sovereigntyIntegrity, { scale: 100, drivers: drivers.sov }),
-        warStatus: observeMetric(world, warTrue, {
-          scale: 100,
-          drivers: drivers.war,
-          extraUncertainty: world.conflicts.length > 0 ? 0.35 : 0.1,
-        }),
+        ...indicators,
       },
     },
   };
