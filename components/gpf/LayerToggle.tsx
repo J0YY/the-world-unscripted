@@ -19,7 +19,7 @@ export default function LayerToggle({
   showExposure,
   onShowExposureChange,
 }: LayerToggleProps) {
-  const modes: MapMode[] = ["pressure", "narrative", "entanglement", "sentiment"];
+  const modes: MapMode[] = ["relationship", "world-events"];
 
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
@@ -40,26 +40,6 @@ export default function LayerToggle({
         ))}
       </div>
 
-      <div className="flex items-center gap-4">
-        <label className="flex items-center gap-2 text-xs font-mono text-[var(--ds-gray-900)] cursor-pointer">
-          <input
-            type="checkbox"
-            checked={intelFog}
-            onChange={(e) => onIntelFogChange(e.target.checked)}
-            className="w-3 h-3 accent-[var(--ds-gray-1000)]"
-          />
-          Intel Fog
-        </label>
-        <label className="flex items-center gap-2 text-xs font-mono text-[var(--ds-gray-900)] cursor-pointer">
-          <input
-            type="checkbox"
-            checked={showExposure}
-            onChange={(e) => onShowExposureChange(e.target.checked)}
-            className="w-3 h-3 accent-[var(--ds-gray-1000)]"
-          />
-          Exposure Halo
-        </label>
-      </div>
     </div>
   );
 }

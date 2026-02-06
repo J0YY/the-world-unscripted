@@ -1,90 +1,41 @@
 "use client";
 
 import { useMemo, memo, useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import { geoMercator } from "d3-geo";
-import { mapModeConfig, type HotspotCluster, type MapMode, type GeoPoint } from "./types";
+import { mapModeConfig, type MapMode, type CountryColorMap } from "./types";
 
 type DottedMapData = Record<string, Array<{ lon: number; lat: number; cityDistanceRank: number }>>;
 
 const modeColors: Record<MapMode, { high: string; med: string; low: string }> = {
-  pressure: { high: "#dc2626", med: "#f59e0b", low: "#22c55e" },
-  narrative: { high: "#3b82f6", med: "#8b5cf6", low: "#06b6d4" },
-  entanglement: { high: "#ec4899", med: "#f97316", low: "#84cc16" },
-  sentiment: { high: "#dc2626", med: "#f59e0b", low: "#22c55e" },
+  relationship: { high: "#dc2626", med: "#eab308", low: "#22c55e" },
+  "world-events": { high: "#ffffff", med: "#ffffff", low: "#ffffff" },
 };
 
-const StaticPixel = memo(({ x, y }: { x: number; y: number }) => (
-  <rect x={x} y={y} width={3} height={3} fill="rgba(255, 255, 255, 0.5)" />
-));
-StaticPixel.displayName = "StaticPixel";
-
-const ClusterDot = memo(
-  ({
-    x,
-    y,
-    color,
-    size,
-    delay,
-    intensity,
-  }: {
-    x: number;
-    y: number;
-    color: string;
-    size: number;
-    delay: number;
-    intensity: "high" | "med" | "low";
-  }) => {
-    const pulseSpeed = intensity === "high" ? 1.2 : intensity === "med" ? 1.8 : 2.5;
-    const baseOpacity = intensity === "high" ? 0.9 : intensity === "med" ? 0.7 : 0.5;
-    const safeSize = Number.isFinite(size) ? size : 3;
-
-    return (
-      <motion.circle
-        cx={x}
-        cy={y}
-        r={safeSize}
-        fill={color}
-        initial={{ opacity: baseOpacity * 0.5 }}
-        animate={{
-          opacity: [baseOpacity * 0.5, baseOpacity, baseOpacity * 0.5],
-          scale: [1, 1.2, 1],
-        }}
-        transition={{
-          duration: pulseSpeed,
-          repeat: Number.POSITIVE_INFINITY,
-          ease: "easeInOut",
-          delay: delay,
-        }}
-        style={{ transformOrigin: `${x}px ${y}px` }}
-      />
-    );
-  },
+const ColoredPixel = memo(
+  ({ x, y, color }: { x: number; y: number; color: string }) => (
+    <rect x={x} y={y} width={2.5} height={2.5} fill={color} opacity={0.9} />
+  )
 );
-ClusterDot.displayName = "ClusterDot";
+ColoredPixel.displayName = "ColoredPixel";
+
+const UncoloredPixel = memo(({ x, y }: { x: number; y: number }) => (
+  <rect x={x} y={y} width={2.5} height={2.5} fill="rgba(255, 255, 255, 0.3)" />
+));
+UncoloredPixel.displayName = "UncoloredPixel";
 
 interface PixelWorldMapProps {
   width?: number;
   height?: number;
   mode: MapMode;
-  intelFog: boolean;
-  showExposure: boolean;
-  hotspotClusters: HotspotCluster[];
-  homeRegion: GeoPoint;
-  fogRegions: Array<{ lat: number; lon: number; radius: number }>;
+  countryColors: CountryColorMap[];
 }
 
 export default function PixelWorldMap({
   width = 1000,
   height = 560,
   mode,
-  intelFog,
-  showExposure,
-  hotspotClusters,
-  homeRegion,
-  fogRegions,
+  countryColors,
 }: PixelWorldMapProps) {
-  const [fogNoise, setFogNoise] = useState<Array<{ x: number; y: number; opacity: number }>>([]);
   const [dottedMapData, setDottedMapData] = useState<DottedMapData | null>(null);
   const [dottedMapErr, setDottedMapErr] = useState<string | null>(null);
 
@@ -97,28 +48,6 @@ export default function PixelWorldMap({
         .translate([width / 2, height / 2]),
     [width, height],
   );
-
-  useEffect(() => {
-    if (!intelFog) {
-      setFogNoise([]);
-      return;
-    }
-    const noise: Array<{ x: number; y: number; opacity: number }> = [];
-    fogRegions.forEach((region) => {
-      const center = projection([region.lon, region.lat]);
-      if (!center) return;
-      for (let i = 0; i < 50; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const distance = Math.random() * region.radius * 8;
-        noise.push({
-          x: center[0] + Math.cos(angle) * distance,
-          y: center[1] + Math.sin(angle) * distance,
-          opacity: 0.1 + Math.random() * 0.3,
-        });
-      }
-    });
-    setFogNoise(noise);
-  }, [intelFog, projection, fogRegions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,11 +66,32 @@ export default function PixelWorldMap({
     };
   }, []);
 
-  const staticPixels = useMemo(() => {
-    const pixels: Array<{ key: string; x: number; y: number }> = [];
-    if (!dottedMapData) return pixels;
+  // Build map of country code to color
+  const countryColorMap = useMemo(() => {
+    const map = new Map<string, { color: string; intensity: "high" | "med" | "low" | "uncolored" }>();
+    countryColors.forEach((cc) => {
+      map.set(cc.countryCode, { color: cc.color || "#999999", intensity: cc.intensity });
+    });
+    return map;
+  }, [countryColors]);
+
+  const pixels = useMemo(() => {
+    const result: Array<{
+      key: string;
+      x: number;
+      y: number;
+      color: string;
+      countryCode: string;
+      isColored: boolean;
+    }> = [];
+
+    if (!dottedMapData) return result;
 
     Object.entries(dottedMapData).forEach(([countryCode, cities]) => {
+      const colorInfo = countryColorMap.get(countryCode);
+      const isColored = colorInfo != null && colorInfo.intensity !== "uncolored";
+      const color = colorInfo?.color || "rgba(255, 255, 255, 0.3)";
+
       cities.forEach((city) => {
         const coords = projection([city.lon, city.lat]);
         if (!coords) return;
@@ -149,102 +99,22 @@ export default function PixelWorldMap({
         const [x, y] = coords;
         if (x < 0 || x > width || y < 0 || y > height) return;
 
-        pixels.push({
+        result.push({
           key: `${countryCode}-${city.cityDistanceRank}`,
           x,
           y,
+          color,
+          countryCode,
+          isColored,
         });
       });
     });
 
-    return pixels;
-  }, [dottedMapData, projection, width, height]);
-
-  const clusterDots = useMemo(() => {
-    const colors = modeColors[mode];
-    const allDots: Array<{
-      key: string;
-      x: number;
-      y: number;
-      color: string;
-      size: number;
-      delay: number;
-      intensity: "high" | "med" | "low";
-    }> = [];
-
-    const seededRandom = (seed: number) => {
-      const x = Math.sin(seed) * 10000;
-      return x - Math.floor(x);
-    };
-
-    hotspotClusters.forEach((cluster) => {
-      const intensity =
-        cluster.intensity === "high" || cluster.intensity === "med" || cluster.intensity === "low"
-          ? cluster.intensity
-          : "low";
-      const radius = Number.isFinite(cluster.radius) ? cluster.radius : 32;
-      const dotCount = Number.isFinite(cluster.dotCount) ? cluster.dotCount : 14;
-
-      const centerCoords = projection([cluster.lon, cluster.lat]);
-      if (!centerCoords) return;
-
-      const [cx, cy] = centerCoords;
-      const color = colors[intensity];
-
-      for (let i = 0; i < dotCount; i++) {
-        const seedBase = typeof cluster.id === "string" && cluster.id.length ? cluster.id.charCodeAt(0) : 71;
-        const seed = seedBase * 1000 + i;
-        const angle = seededRandom(seed) * Math.PI * 2;
-        const distance = seededRandom(seed + 1) * radius;
-
-        const distanceRatio = radius > 0 ? distance / radius : 0;
-        const baseSize = intensity === "high" ? 5 : intensity === "med" ? 4 : 3;
-        const size = baseSize * (1.2 - distanceRatio * 0.7);
-
-        allDots.push({
-          key: `${cluster.id}-${i}`,
-          x: cx + Math.cos(angle) * distance,
-          y: cy + Math.sin(angle) * distance,
-          color,
-          size,
-          delay: seededRandom(seed + 2) * 2,
-          intensity,
-        });
-      }
-    });
-
-    return allDots;
-  }, [projection, mode, hotspotClusters]);
-
-  const glowGradients = useMemo(() => {
-    const colors = modeColors[mode];
-    return hotspotClusters
-      .map((cluster) => {
-        const coords = projection([cluster.lon, cluster.lat]);
-        if (!coords) return null;
-        const intensity =
-          cluster.intensity === "high" || cluster.intensity === "med" || cluster.intensity === "low"
-            ? cluster.intensity
-            : "low";
-        const radius = Number.isFinite(cluster.radius) ? cluster.radius : 32;
-        const r = Number.isFinite(radius * 1.5) ? Math.max(6, radius * 1.5) : 48;
-        return {
-          id: `glow-${cluster.id}`,
-          cx: coords[0],
-          cy: coords[1],
-          r,
-          color: colors[intensity],
-          intensity,
-        };
-      })
-      .filter(Boolean);
-  }, [projection, mode, hotspotClusters]);
-
-  const homeCoords = useMemo(() => {
-    return projection([homeRegion.lon, homeRegion.lat]);
-  }, [projection, homeRegion]);
+    return result;
+  }, [dottedMapData, projection, width, height, countryColorMap]);
 
   const config = mapModeConfig[mode];
+  const colors = modeColors[mode];
 
   return (
     <div className="relative w-full">
@@ -254,139 +124,33 @@ export default function PixelWorldMap({
         </div>
       ) : null}
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto bg-[var(--ds-background-100)]">
-        <defs>
-          {glowGradients.map(
-            (glow) =>
-              glow && (
-                <radialGradient key={glow.id} id={glow.id}>
-                  <stop
-                    offset="0%"
-                    stopColor={glow.color}
-                    stopOpacity={glow.intensity === "high" ? 0.4 : glow.intensity === "med" ? 0.25 : 0.15}
-                  />
-                  <stop
-                    offset="50%"
-                    stopColor={glow.color}
-                    stopOpacity={glow.intensity === "high" ? 0.15 : glow.intensity === "med" ? 0.08 : 0.05}
-                  />
-                  <stop offset="100%" stopColor={glow.color} stopOpacity="0" />
-                </radialGradient>
-              ),
-          )}
-          <radialGradient id="exposureGradient">
-            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.3" />
-            <stop offset="50%" stopColor="#3b82f6" stopOpacity="0.1" />
-            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-          </radialGradient>
-        </defs>
-
         <g>
-          {staticPixels.map((p) => (
-            <StaticPixel key={p.key} x={p.x} y={p.y} />
-          ))}
-        </g>
-
-        <g>
-          {glowGradients.map(
-            (glow) =>
-              glow && (
-                <motion.circle
-                  key={`bg-${glow.id}`}
-                  cx={glow.cx}
-                  cy={glow.cy}
-                  r={Number.isFinite(glow.r) ? glow.r : 48}
-                  fill={`url(#${glow.id})`}
-                  animate={{
-                    r: [
-                      (Number.isFinite(glow.r) ? glow.r : 48) * 0.9,
-                      (Number.isFinite(glow.r) ? glow.r : 48) * 1.1,
-                      (Number.isFinite(glow.r) ? glow.r : 48) * 0.9,
-                    ],
-                    opacity: [0.8, 1, 0.8],
-                  }}
-                  transition={{
-                    duration: glow.intensity === "high" ? 2 : glow.intensity === "med" ? 3 : 4,
-                    repeat: Number.POSITIVE_INFINITY,
-                    ease: "easeInOut",
-                  }}
-                />
-              ),
+          {pixels.map((p) =>
+            p.isColored ? (
+              <ColoredPixel key={p.key} x={p.x} y={p.y} color={p.color} />
+            ) : (
+              <UncoloredPixel key={p.key} x={p.x} y={p.y} />
+            )
           )}
         </g>
-
-        <g>
-          {clusterDots.map((dot) => (
-            <ClusterDot
-              key={dot.key}
-              x={dot.x}
-              y={dot.y}
-              color={dot.color}
-              size={dot.size}
-              delay={dot.delay}
-              intensity={dot.intensity}
-            />
-          ))}
-        </g>
-
-        {showExposure && homeCoords && (
-          <g>
-            <motion.circle
-              cx={homeCoords[0]}
-              cy={homeCoords[1]}
-              r={60}
-              fill="url(#exposureGradient)"
-              animate={{
-                r: [55, 65, 55],
-                opacity: [0.8, 1, 0.8],
-              }}
-              transition={{
-                duration: 3,
-                repeat: Number.POSITIVE_INFINITY,
-                ease: "easeInOut",
-              }}
-            />
-            <circle cx={homeCoords[0]} cy={homeCoords[1]} r={4} fill="#3b82f6" opacity={0.8} />
-          </g>
-        )}
-
-        {intelFog && (
-          <g>
-            {fogNoise.map((n, i) => (
-              <rect
-                key={`fog-${i}`}
-                x={n.x}
-                y={n.y}
-                width={8 + Math.random() * 8}
-                height={8 + Math.random() * 8}
-                fill="var(--ds-background-100)"
-                opacity={n.opacity}
-              />
-            ))}
-          </g>
-        )}
       </svg>
 
       <div className="absolute bottom-2 left-2 p-2 bg-[var(--ds-background-100)]/80 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded text-[10px] font-mono">
         <div className="text-[var(--ds-gray-900)] uppercase mb-1.5">{config.legendLabel}</div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: modeColors[mode].high }} />
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.high }} />
             <span className="text-[var(--ds-gray-900)]">High</span>
           </div>
           <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: modeColors[mode].med }} />
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.med }} />
             <span className="text-[var(--ds-gray-900)]">Med</span>
           </div>
           <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: modeColors[mode].low }} />
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.low }} />
             <span className="text-[var(--ds-gray-900)]">Low</span>
           </div>
         </div>
-        {intelFog && (
-          <div className="mt-1.5 pt-1.5 border-t border-[var(--ds-gray-alpha-400)] text-[var(--ds-gray-600)]">
-            Fog: Signal confidence degraded
-          </div>
-        )}
       </div>
     </div>
   );

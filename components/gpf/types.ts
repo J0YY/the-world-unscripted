@@ -1,4 +1,4 @@
-export type MapMode = "pressure" | "narrative" | "entanglement" | "sentiment";
+export type MapMode = "relationship" | "world-events";
 
 export type Trend = "up" | "down" | "stable";
 
@@ -26,40 +26,29 @@ export type UiBriefingItem = {
   content: string;
 };
 
-export type HotspotCluster = {
-  id: string;
+export type CountryColorMap = {
+  countryCode: string;
   lat: number;
   lon: number;
-  intensity: "high" | "med" | "low";
-  radius: number;
-  dotCount: number;
+  intensity: "high" | "med" | "low" | "uncolored";
+  color?: string;
 };
 
 export type GeoPoint = { lat: number; lon: number };
 
 export const mapModeConfig: Record<
   MapMode,
-  { label: string; hotspotLabel: string; legendLabel: string }
+  { label: string; legendLabel: string; hotspotLabel: string }
 > = {
-  pressure: {
-    label: "Pressure",
-    hotspotLabel: "TOP HOTSPOTS (PERCEIVED)",
-    legendLabel: "Pressure Intensity",
+  relationship: {
+    label: "Relationship",
+    legendLabel: "International Relations",
+    hotspotLabel: "Key Relations",
   },
-  narrative: {
-    label: "Narrative",
-    hotspotLabel: "NARRATIVE CENTERS",
-    legendLabel: "Narrative Density",
-  },
-  entanglement: {
-    label: "Entanglement",
-    hotspotLabel: "ENTANGLEMENT NODES",
-    legendLabel: "Connection Strength",
-  },
-  sentiment: {
-    label: "Sentiment",
-    hotspotLabel: "SENTIMENT NODES",
-    legendLabel: "Attitude Toward You",
+  "world-events": {
+    label: "World Events",
+    legendLabel: "Event Impact",
+    hotspotLabel: "Active Events",
   },
 };
 
