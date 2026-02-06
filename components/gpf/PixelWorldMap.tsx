@@ -37,12 +37,13 @@ const ClusterDot = memo(
   }) => {
     const pulseSpeed = intensity === "high" ? 1.2 : intensity === "med" ? 1.8 : 2.5;
     const baseOpacity = intensity === "high" ? 0.9 : intensity === "med" ? 0.7 : 0.5;
+    const safeSize = Number.isFinite(size) ? size : 3;
 
     return (
       <motion.circle
         cx={x}
         cy={y}
-        r={size}
+        r={safeSize}
         fill={color}
         initial={{ opacity: baseOpacity * 0.5 }}
         animate={{
@@ -177,19 +178,27 @@ export default function PixelWorldMap({
     };
 
     hotspotClusters.forEach((cluster) => {
+      const intensity =
+        cluster.intensity === "high" || cluster.intensity === "med" || cluster.intensity === "low"
+          ? cluster.intensity
+          : "low";
+      const radius = Number.isFinite(cluster.radius) ? cluster.radius : 32;
+      const dotCount = Number.isFinite(cluster.dotCount) ? cluster.dotCount : 14;
+
       const centerCoords = projection([cluster.lon, cluster.lat]);
       if (!centerCoords) return;
 
       const [cx, cy] = centerCoords;
-      const color = colors[cluster.intensity];
+      const color = colors[intensity];
 
-      for (let i = 0; i < cluster.dotCount; i++) {
-        const seed = cluster.id.charCodeAt(0) * 1000 + i;
+      for (let i = 0; i < dotCount; i++) {
+        const seedBase = typeof cluster.id === "string" && cluster.id.length ? cluster.id.charCodeAt(0) : 71;
+        const seed = seedBase * 1000 + i;
         const angle = seededRandom(seed) * Math.PI * 2;
-        const distance = seededRandom(seed + 1) * cluster.radius;
+        const distance = seededRandom(seed + 1) * radius;
 
-        const distanceRatio = distance / cluster.radius;
-        const baseSize = cluster.intensity === "high" ? 5 : cluster.intensity === "med" ? 4 : 3;
+        const distanceRatio = radius > 0 ? distance / radius : 0;
+        const baseSize = intensity === "high" ? 5 : intensity === "med" ? 4 : 3;
         const size = baseSize * (1.2 - distanceRatio * 0.7);
 
         allDots.push({
@@ -199,7 +208,7 @@ export default function PixelWorldMap({
           color,
           size,
           delay: seededRandom(seed + 2) * 2,
-          intensity: cluster.intensity,
+          intensity,
         });
       }
     });
@@ -213,13 +222,18 @@ export default function PixelWorldMap({
       .map((cluster) => {
         const coords = projection([cluster.lon, cluster.lat]);
         if (!coords) return null;
+        const intensity =
+          cluster.intensity === "high" || cluster.intensity === "med" || cluster.intensity === "low"
+            ? cluster.intensity
+            : "low";
+        const radius = Number.isFinite(cluster.radius) ? cluster.radius : 32;
         return {
           id: `glow-${cluster.id}`,
           cx: coords[0],
           cy: coords[1],
-          r: cluster.radius * 1.5,
-          color: colors[cluster.intensity],
-          intensity: cluster.intensity,
+          r: radius * 1.5,
+          color: colors[intensity],
+          intensity,
         };
       })
       .filter(Boolean);

@@ -711,6 +711,10 @@ export async function getResolutionReport(
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
   if (existing) return { ...base, llm: existing };
 
+  // Fast mode: don't block the resolution API on LLM generation.
+  // The UI can render from deterministic `publicResolution` + deltas immediately.
+  if (fastMode()) return base;
+
   try {
     const llm = await llmGenerateResolution({
       turnNumber,
