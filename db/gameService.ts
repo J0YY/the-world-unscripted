@@ -1,5 +1,5 @@
 import { prisma } from "./client";
-import { PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
+import { buildCountryProfile, PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
 import { llmGenerateCountryProfile, llmGenerateTurnPackage, llmMode, llmParsePlayerDirective } from "./llm";
 import { ensureDbSchema } from "./ensureDb";
@@ -91,7 +91,18 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
     orderBy: { updatedAt: "desc" },
   });
   if (!game) return null;
-  return game.lastPlayerSnapshot as unknown as GameSnapshot;
+  const snap = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  // Backfill older snapshots (pre-dossier upgrade).
+  if (!snap.countryProfile?.startingAssessment) {
+    const world = game.worldState as unknown as WorldState;
+    snap.countryProfile = buildCountryProfile(world, {
+      economicStability: snap.playerView.indicators.economicStability,
+      legitimacy: snap.playerView.indicators.legitimacy,
+      unrestLevel: snap.playerView.indicators.unrestLevel,
+      intelligenceClarity: snap.playerView.indicators.intelligenceClarity,
+    });
+  }
+  return snap;
 }
 
 export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
@@ -99,6 +110,23 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   if (!game) throw new Error("Game not found");
   const snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
   snapshot.llmMode = llmMode();
+
+  // Backfill older snapshots (pre-dossier upgrade) so UI never crashes.
+  if (!snapshot.countryProfile?.startingAssessment) {
+    const world = game.worldState as unknown as WorldState;
+    snapshot.countryProfile = buildCountryProfile(world, {
+      economicStability: snapshot.playerView.indicators.economicStability,
+      legitimacy: snapshot.playerView.indicators.legitimacy,
+      unrestLevel: snapshot.playerView.indicators.unrestLevel,
+      intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
+    });
+    // Persist upgraded snapshot shape.
+    await prisma.game.update({
+      where: { id: gameId },
+      data: { lastPlayerSnapshot: snapshot as unknown as object },
+    });
+  }
+
   return snapshot;
 }
 

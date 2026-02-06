@@ -254,10 +254,34 @@ export default function LandingPage() {
                 <div className="border border-border/40 bg-card/50 p-6">
                   <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Starting assessment</div>
                   <div className="mt-4 grid grid-cols-2 gap-3">
-                    <DossierSignal label="Economic stability" s={snap.countryProfile.startingAssessment.economicStability} />
-                    <DossierSignal label="Legitimacy" s={snap.countryProfile.startingAssessment.legitimacy} />
-                    <DossierSignal label="Unrest" s={snap.countryProfile.startingAssessment.unrest} />
-                    <DossierSignal label="Intel clarity" s={snap.countryProfile.startingAssessment.intelClarity} />
+                    <DossierSignal
+                      label="Economic stability"
+                      s={
+                        snap.countryProfile.startingAssessment?.economicStability ??
+                        fallbackSignalFromMetric(snap.playerView.indicators.economicStability)
+                      }
+                    />
+                    <DossierSignal
+                      label="Legitimacy"
+                      s={
+                        snap.countryProfile.startingAssessment?.legitimacy ??
+                        fallbackSignalFromMetric(snap.playerView.indicators.legitimacy)
+                      }
+                    />
+                    <DossierSignal
+                      label="Unrest"
+                      s={
+                        snap.countryProfile.startingAssessment?.unrest ??
+                        fallbackSignalFromMetric(snap.playerView.indicators.unrestLevel, { invert: true })
+                      }
+                    />
+                    <DossierSignal
+                      label="Intel clarity"
+                      s={
+                        snap.countryProfile.startingAssessment?.intelClarity ??
+                        fallbackSignalFromMetric(snap.playerView.indicators.intelligenceClarity)
+                      }
+                    />
                   </div>
 
                   <div className="mt-8 font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
@@ -422,6 +446,15 @@ function DossierSignal({
       {s.note ? <div className="mt-1 text-[10px] font-mono text-muted-foreground/90">{s.note}</div> : null}
     </div>
   );
+}
+
+function fallbackSignalFromMetric(
+  m: { estimatedValue: number; confidence: "low" | "med" | "high" },
+  opts?: { invert?: boolean },
+) {
+  const v = opts?.invert ? 100 - m.estimatedValue : m.estimatedValue;
+  const level = v >= 75 ? "high" : v >= 55 ? "moderate" : v >= 35 ? "low" : "critical";
+  return { level, confidence: m.confidence };
 }
 
 function Panel({ id, children }: { id: string; children: React.ReactNode }) {
