@@ -279,13 +279,11 @@ export default function LandingPage() {
               <button
                 type="button"
                 onClick={() => scrollToStep("mandate")}
-                className="inline-flex items-center gap-2 border border-border/60 px-4 py-2 font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground hover:border-accent transition-colors disabled:opacity-50"
+                className="group inline-flex items-center gap-3 border border-foreground/20 px-6 py-3 font-mono text-xs uppercase tracking-widest text-foreground hover:border-accent hover:text-accent transition-all duration-200 disabled:opacity-50"
               >
-                {snap ? "Accept mandate" : "Continue"}
+                <ScrambleTextOnHover text={snap ? "Accept mandate" : "Continue"} as="span" duration={0.6} />
+                <BitmapChevron className="transition-transform duration-[400ms] ease-in-out group-hover:rotate-45" />
               </button>
-              <span className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground/70">
-                Briefing and mandate
-              </span>
             </div>
           </div>
         </Panel>
@@ -336,10 +334,11 @@ export default function LandingPage() {
               </button>
               <button
                 type="button"
-                onClick={() => scrollToStep("hero")}
-                className="font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors duration-200"
+                onClick={() => scrollToStep("dossier")}
+                className="group font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center gap-2"
               >
-                Back
+                <span className="transition-transform duration-300 group-hover:-translate-x-1">←</span>
+                <ScrambleTextOnHover text="Back" as="span" duration={0.4} />
               </button>
             </div>
           </div>
