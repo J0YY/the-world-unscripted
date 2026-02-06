@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import type { TurnOutcome } from "@/engine";
@@ -35,20 +35,32 @@ type ResolutionReport = {
 
 export default function ResolutionPage() {
   const router = useRouter();
-  const outcome = getLastOutcome<TurnOutcome>();
-  const gameId = getStoredGameId();
+  // IMPORTANT: read from storage exactly once. If we read on every render,
+  // we create new object identities and can accidentally trigger fetch loops.
+  const [outcome] = useState(() => getLastOutcome<TurnOutcome>());
+  const [gameId] = useState(() => getStoredGameId());
   const [report, setReport] = useState<ResolutionReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const fetchedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!outcome || !gameId) {
       router.push("/game");
       return;
     }
-    apiResolutionReport(gameId, outcome.turnResolved)
+    const key = `${gameId}:${outcome.turnResolved}`;
+    if (fetchedKeyRef.current === key) return;
+    fetchedKeyRef.current = key;
+
+    const ac = new AbortController();
+    apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal })
       .then((r) => setReport(r as ResolutionReport))
-      .catch((e) => setErr((e as Error).message));
-  }, [outcome, gameId, router]);
+      .catch((e) => {
+        if ((e as Error).name === "AbortError") return;
+        setErr((e as Error).message);
+      });
+    return () => ac.abort();
+  }, [outcome, outcome?.turnResolved, gameId, router]);
 
   const title = useMemo(
     () => `Turn ${outcome?.turnResolved ?? "?"} — Resolution`,

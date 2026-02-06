@@ -3,6 +3,10 @@ import { getResolutionReport } from "@/db/gameService";
 
 export const runtime = "nodejs";
 
+declare global {
+  var __twuoResolutionInflight: Map<string, Promise<unknown>> | undefined;
+}
+
 export async function GET(req: Request) {
   try {
     const url = new URL(req.url);
@@ -12,7 +16,20 @@ export async function GET(req: Request) {
     if (!turn) return NextResponse.json({ error: "Missing turn" }, { status: 400 });
     const turnNumber = Number(turn);
     if (!Number.isFinite(turnNumber)) return NextResponse.json({ error: "Invalid turn" }, { status: 400 });
-    const report = await getResolutionReport(gameId, turnNumber);
+
+    // In-flight de-dupe: prevents request storms from triggering multiple concurrent
+    // resolution generations (and burning credits) for the same game+turn.
+    const inflight = (globalThis.__twuoResolutionInflight ??= new Map<string, Promise<unknown>>());
+    const key = `${gameId}:${turnNumber}`;
+    const existing = inflight.get(key);
+    if (existing) {
+      const report = await existing;
+      return NextResponse.json(report);
+    }
+
+    const p = getResolutionReport(gameId, turnNumber).finally(() => inflight.delete(key));
+    inflight.set(key, p);
+    const report = await p;
     return NextResponse.json(report);
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 400 });
