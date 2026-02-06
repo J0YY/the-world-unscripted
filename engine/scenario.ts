@@ -18,8 +18,8 @@ const scenarios: ScenarioTemplate[] = [
     regionLabel: "Eastern Mediterranean",
     countryNames: ["Varosia", "Kalyra", "Lydria"],
     geographySummary: [
-      "Mid-sized coastal state on a constrained sea-lane; urbanized coast, underdeveloped interior.",
-      "Bridge between maritime trade routes and an unstable hinterland; energy transit corridors nearby.",
+      "Mid-sized coastal state on a constrained sea-lane: dense urban coast, underdeveloped interior, and a single port that functions as a national choke point. Smuggling and port labor politics are persistent leverage points. Your margin for error is thin when shipping insurers get nervous.",
+      "Bridge between maritime trade routes and an unstable hinterland; energy transit corridors nearby and rival intelligence services operate with long memories. Domestic politics is transactional and brittle under price shocks. Geography gives you leverage—until it becomes a trap.",
     ],
     neighbors: [
       ["Turkey", "Syria", "Greece"],
@@ -40,8 +40,8 @@ const scenarios: ScenarioTemplate[] = [
     regionLabel: "Eastern Europe",
     countryNames: ["Drevnia", "Karsovia", "Belograd"],
     geographySummary: [
-      "Landlocked border state on a friction line between blocs; flat approaches and exposed supply routes.",
-      "Industrial legacy with aging infrastructure; strong diaspora ties to the EU.",
+      "Landlocked border state on a friction line between blocs: flat approaches, exposed supply routes, and a capital within easy reach of mechanized forces. Your strategic depth is limited. Deterrence is more about signaling and logistics than heroics.",
+      "Industrial legacy with aging infrastructure and a politically active diaspora; remittances and EU access can stabilize—or become conditional leverage. Border narratives spread fast, and small incidents scale quickly. Domestic tolerance for prolonged hardship is low.",
     ],
     neighbors: [
       ["Poland", "Ukraine", "Romania"],
@@ -62,8 +62,8 @@ const scenarios: ScenarioTemplate[] = [
     regionLabel: "West Africa (Sahel fringe)",
     countryNames: ["Sahelia", "Kombara", "Tessit"],
     geographySummary: [
-      "Semi-arid state with porous borders; internal security stretched across vast terrain.",
-      "Commodity exporter with weak institutions and strong patronage networks.",
+      "Semi-arid state with porous borders and vast terrain: internal security is stretched, and state presence thins rapidly outside cities. Armed groups exploit distance, not ideology. Control is negotiated as much as enforced.",
+      "Commodity exporter with weak institutions and strong patronage networks; revenue is volatile and loyalties are rented. Foreign security assistance comes with strings. A single bad harvest or currency shock can rewire domestic politics.",
     ],
     neighbors: [
       ["Mali", "Niger", "Burkina Faso"],
@@ -84,8 +84,8 @@ const scenarios: ScenarioTemplate[] = [
     regionLabel: "Southeast Asia",
     countryNames: ["Sundara", "Meratai", "Kepura"],
     geographySummary: [
-      "Archipelagic state astride a critical shipping route; maritime disputes nearby.",
-      "Manufacturing base vulnerable to supply-chain disruption and capital flight.",
+      "Archipelagic state astride a critical shipping route: maritime disputes nearby and a navy that must cover too much water with too few hulls. Sea-lane stability is your lifeline and your vulnerability. A single incident can pull major powers into your weather.",
+      "Manufacturing base vulnerable to supply-chain disruption and capital flight; investors react to perception, not just fundamentals. Ports, customs, and shipping insurers are strategic terrain. Domestic narratives swing quickly when export orders stall.",
     ],
     neighbors: [
       ["Malaysia", "Indonesia", "Philippines"],

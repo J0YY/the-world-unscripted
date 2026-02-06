@@ -32,7 +32,9 @@ export function SplitFlapAudioProvider({ children }: { children: React.ReactNode
 
   const triggerHaptic = useCallback(() => {
     if (isMuted) return;
-    if (typeof navigator !== "undefined" && "vibrate" in navigator) (navigator as any).vibrate(10);
+    if (typeof navigator === "undefined") return;
+    const nav = navigator as Navigator & { vibrate?: (pattern: number | number[]) => boolean };
+    nav.vibrate?.(10);
   }, [isMuted]);
 
   const playClick = useCallback(() => {

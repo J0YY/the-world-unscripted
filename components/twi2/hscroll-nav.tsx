@@ -21,7 +21,11 @@ export function HScrollNav({
   const items = useMemo(() => navItems, []);
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    // This component is used to avoid hydration mismatches for UI that depends on the browser.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMounted(true);
+  }, []);
   if (!mounted) return null;
 
   return (

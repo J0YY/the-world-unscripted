@@ -109,8 +109,7 @@ export default function LandingPage() {
 
       <div
         ref={scrollerRef}
-        className="relative z-10 h-screen overflow-x-hidden overflow-y-hidden flex snap-x snap-mandatory scroll-smooth"
-        style={{ scrollbarWidth: "none" as any }}
+        className="hide-scrollbar relative z-10 h-screen overflow-x-hidden overflow-y-hidden flex snap-x snap-mandatory scroll-smooth"
       >
         <Panel id="hero">
           <AnimatedNoise opacity={0.03} />
@@ -240,12 +239,32 @@ export default function LandingPage() {
                   <div className="mt-3 font-mono text-sm text-foreground/90">{snap.countryProfile.neighbors.join(", ")}</div>
                   <div className="mt-8 font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Regime</div>
                   <div className="mt-3 font-mono text-sm text-foreground/90">{snap.countryProfile.regimeType}</div>
+
+                  <div className="mt-8 font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                    Strategic assets (relative)
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    <DossierStat label="Oil/Gas" value={snap.countryProfile.resources.oilGas} />
+                    <DossierStat label="Food" value={snap.countryProfile.resources.food} />
+                    <DossierStat label="Rare earths" value={snap.countryProfile.resources.rareEarths} />
+                    <DossierStat label="Industrial" value={snap.countryProfile.resources.industrialBase} />
+                  </div>
                 </div>
 
                 <div className="border border-border/40 bg-card/50 p-6">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Vulnerabilities</div>
+                  <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Starting assessment</div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <DossierSignal label="Economic stability" m={snap.playerView.indicators.economicStability} />
+                    <DossierSignal label="Legitimacy" m={snap.playerView.indicators.legitimacy} />
+                    <DossierSignal label="Unrest" m={snap.playerView.indicators.unrestLevel} invert />
+                    <DossierSignal label="Intel clarity" m={snap.playerView.indicators.intelligenceClarity} />
+                  </div>
+
+                  <div className="mt-8 font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
+                    Key vulnerabilities
+                  </div>
                   <ul className="mt-4 space-y-2">
-                    {snap.countryProfile.vulnerabilities.slice(0, 4).map((v) => (
+                    {snap.countryProfile.vulnerabilities.slice(0, 6).map((v) => (
                       <li key={v} className="font-mono text-xs text-muted-foreground leading-relaxed">
                         - {v}
                       </li>
@@ -374,6 +393,43 @@ export default function LandingPage() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+function bucket100(v: number): "critical" | "low" | "moderate" | "high" {
+  if (v >= 75) return "high";
+  if (v >= 55) return "moderate";
+  if (v >= 35) return "low";
+  return "critical";
+}
+
+function DossierStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded border border-border/40 bg-background/40 px-3 py-2">
+      <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-xs font-mono text-foreground/90">{bucket100(value)}</div>
+    </div>
+  );
+}
+
+function DossierSignal({
+  label,
+  m,
+  invert,
+}: {
+  label: string;
+  m: { estimatedValue: number; confidence: "low" | "med" | "high" };
+  invert?: boolean;
+}) {
+  const level = bucket100(invert ? 100 - m.estimatedValue : m.estimatedValue);
+  return (
+    <div className="rounded border border-border/40 bg-background/40 px-3 py-2">
+      <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-muted-foreground">{label}</div>
+      <div className="mt-1 flex items-center justify-between gap-3 text-xs font-mono text-foreground/90">
+        <span className="uppercase">{level}</span>
+        <span className="text-muted-foreground">conf {m.confidence}</span>
+      </div>
+    </div>
   );
 }
 

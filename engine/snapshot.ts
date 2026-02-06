@@ -16,11 +16,16 @@ export function buildCountryProfile(world: WorldState): CountryProfile {
   const vulnerabilities: string[] = [];
   if (p.economy.debtStress >= 60) vulnerabilities.push("Debt refinancing risk; external financing leverage is real.");
   if (p.economy.inflationPressure >= 60) vulnerabilities.push("Food/fuel price sensitivity; unrest can spike quickly.");
+  if (p.economy.unemployment >= 60) vulnerabilities.push("Employment shock risk; street pressure can rise without warning.");
   if (p.tensions.ethnic >= 60 || p.tensions.regional >= 60)
     vulnerabilities.push("Internal fault lines could be exploited by adversaries or opportunists.");
+  if (p.politics.eliteCohesion <= 45) vulnerabilities.push("Elite fragmentation risk; coups and policy sabotage become plausible.");
+  if (p.politics.militaryLoyalty <= 45) vulnerabilities.push("Military loyalty is uncertain; coercive capacity may fracture under stress.");
   if (p.institutions.intelligenceServices <= 45) vulnerabilities.push("Intelligence clarity is limited; deception risk is high.");
   if (p.military.logistics <= 45) vulnerabilities.push("Logistics constraints limit sustained operations.");
-  if (vulnerabilities.length < 3) vulnerabilities.push("Credibility is recoverable but fragile; bluffing will be punished.");
+  if (p.politics.corruption >= 65) vulnerabilities.push("Corruption exposure; reforms can trigger backlash, inaction bleeds legitimacy.");
+  if (p.politics.mediaControl >= 70) vulnerabilities.push("Information ecosystem is brittle; narrative control can collapse fast under shocks.");
+  if (vulnerabilities.length < 4) vulnerabilities.push("Credibility is recoverable but fragile; bluffing will be punished.");
 
   return {
     name: p.name,
@@ -28,7 +33,7 @@ export function buildCountryProfile(world: WorldState): CountryProfile {
     neighbors: p.neighbors,
     regimeType: p.regimeType,
     resources: p.resources,
-    vulnerabilities: vulnerabilities.slice(0, 4),
+    vulnerabilities: vulnerabilities.slice(0, 6),
   };
 }
 

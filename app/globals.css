@@ -107,6 +107,14 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.hide-scrollbar {
+  scrollbar-width: none; /* Firefox */
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
 /* --- ui-testing-twi2-main landing tokens (scoped) --- */
 .twi2 {
   /* monochrome with orange accent */

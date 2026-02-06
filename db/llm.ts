@@ -11,6 +11,19 @@ export function llmMode(): LlmMode {
   return (process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) ? "ON" : "OFF";
 }
 
+type GeminiGenerateContentResponse = {
+  candidates?: Array<{
+    content?: {
+      parts?: Array<{
+        text?: string;
+      }>;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
+};
+
 async function chatJson<T>(args: {
   system: string;
   user: string;
@@ -55,7 +68,7 @@ async function chatJsonGemini<T>(args: {
     }),
   });
 
-  const payload: any = await res.json().catch(() => ({}));
+  const payload: GeminiGenerateContentResponse = await res.json().catch(() => ({} as GeminiGenerateContentResponse));
   if (!res.ok) {
     const msg = payload.error?.message || `Gemini error (${res.status})`;
     throw new Error(msg);
@@ -496,7 +509,7 @@ async function chatTextGemini(args: {
     }),
   });
 
-  const payload: any = await res.json().catch(() => ({}));
+  const payload: GeminiGenerateContentResponse = await res.json().catch(() => ({} as GeminiGenerateContentResponse));
   if (!res.ok) throw new Error(payload.error?.message || `Gemini error (${res.status})`);
 
   const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;

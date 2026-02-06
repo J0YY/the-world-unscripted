@@ -111,6 +111,8 @@ export function ScrambleTextOnHover({
   }, [text, duration]);
 
   useEffect(() => {
+    // Keep display in sync with prop changes when not actively animating.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!isAnimating.current) setDisplayText(text);
   }, [text]);
 
