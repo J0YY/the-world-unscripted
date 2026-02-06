@@ -204,7 +204,7 @@ export default function LandingPage() {
           </div>
         </Panel>
 
-        <Panel id="dossier">
+        <Panel id="dossier" scrollY>
           <div className="w-full max-w-6xl px-6 md:px-12 pt-20 md:pt-28">
             <div className="mb-10">
               <span className="font-mono text-[10px] uppercase tracking-[0.3em] text-accent">01 / Dossier</span>
@@ -331,7 +331,7 @@ export default function LandingPage() {
           </div>
         </Panel>
 
-        <Panel id="mandate">
+        <Panel id="mandate" scrollY>
           <div className="w-full max-w-6xl px-6 md:px-12 pt-20 md:pt-28">
             <div className="mb-10">
               <span className="font-mono text-[10px] uppercase tracking-[0.3em] text-accent">02 / Mandate</span>
@@ -457,11 +457,14 @@ function fallbackSignalFromMetric(
   return { level, confidence: m.confidence };
 }
 
-function Panel({ id, children }: { id: string; children: React.ReactNode }) {
+function Panel({ id, children, scrollY }: { id: string; children: React.ReactNode; scrollY?: boolean }) {
   return (
     <section
       id={id}
-      className="relative snap-start w-screen h-screen flex items-start flex-shrink-0 overflow-hidden"
+      className={[
+        "relative snap-start w-screen h-screen flex items-start flex-shrink-0 overflow-x-hidden",
+        scrollY ? "overflow-y-auto" : "overflow-hidden",
+      ].join(" ")}
     >
       {children}
     </section>

@@ -167,3 +167,31 @@ export const LlmParseDirectiveSchema = z.object({
   rationale: z.array(z.string().min(10).max(180)).min(1).max(6),
 });
 
+const DossierLevelSchema = z.enum(["critical", "low", "moderate", "high"]);
+
+const DossierSignalSchema = z.object({
+  level: DossierLevelSchema,
+  confidence: z.enum(["low", "med", "high"]),
+  note: z.string().min(6).max(120).optional(),
+});
+
+export const LlmCountryProfileSchema = z.object({
+  name: z.string().min(2).max(80),
+  geographySummary: z.string().min(80).max(700),
+  neighbors: z.array(z.string().min(2).max(40)).min(2).max(6),
+  regimeType: z.enum(["democracy", "hybrid", "authoritarian"]),
+  resources: z.object({
+    oilGas: DossierLevelSchema,
+    food: DossierLevelSchema,
+    rareEarths: DossierLevelSchema,
+    industrialBase: DossierLevelSchema,
+  }),
+  startingAssessment: z.object({
+    economicStability: DossierSignalSchema,
+    legitimacy: DossierSignalSchema,
+    unrest: DossierSignalSchema,
+    intelClarity: DossierSignalSchema,
+  }),
+  vulnerabilities: z.array(z.string().min(12).max(160)).min(4).max(8),
+  generatedBy: z.literal("llm"),
+});
