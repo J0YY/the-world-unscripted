@@ -201,6 +201,14 @@ function newSeed(): string {
   return `seed-${crypto.randomUUID()}`;
 }
 
+function fastMode(): boolean {
+  // Default fast in dev to avoid massive latency/credit burn while iterating.
+  // Opt out by setting TWUO_FAST_MODE=false explicitly.
+  if (process.env.TWUO_FAST_MODE === "false") return false;
+  if (process.env.TWUO_FAST_MODE === "true") return true;
+  return process.env.NODE_ENV !== "production";
+}
+
 export async function createGame(seed?: string): Promise<GameSnapshot> {
   await ensureDbSchema();
   const s = seed?.trim() ? seed.trim() : newSeed();
@@ -208,7 +216,7 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
 
   // Optional LLM generation for Turn 1 briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
-  if (llmMode() === "ON") {
+  if (!fastMode() && llmMode() === "ON") {
     try {
       const pkg = await llmGenerateTurnPackage({ world, phase: "TURN_1" });
       world.current.briefing = pkg.briefing;
@@ -233,7 +241,7 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
   const snapshot = getPlayerSnapshot(game.id, world, "ACTIVE");
 
   // Optional LLM-generated dossier (player-facing country profile). Fail closed to deterministic profile.
-  if (llmMode() === "ON") {
+  if (!fastMode() && llmMode() === "ON") {
     try {
       const ind = snapshot.playerView.indicators;
       const dossier = await llmGenerateCountryProfile({
@@ -253,7 +261,9 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
   }
 
   // Optional LLM-generated control-room view model for this turn.
-  await attachControlRoomView(game.id, world, snapshot);
+  if (!fastMode()) {
+    await attachControlRoomView(game.id, world, snapshot);
+  }
 
   await prisma.game.update({
     where: { id: game.id },
@@ -299,7 +309,7 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
   }
 
   // Backfill control-room view (LLM-first) so UI uses LLM for Pressure/Hotspots/Signals/Feed immediately.
-  if (llmMode() === "ON" && !snap.playerView.controlRoom) {
+  if (!fastMode() && llmMode() === "ON" && !snap.playerView.controlRoom) {
     const world = game.worldState as unknown as WorldState;
     await attachControlRoomView(game.id, world, snap);
     await prisma.game.update({
@@ -333,7 +343,7 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   }
 
   // Backfill control-room view (LLM-first) so existing games render from LLM without requiring a new turn.
-  if (snapshot.llmMode === "ON" && !snapshot.playerView.controlRoom) {
+  if (!fastMode() && snapshot.llmMode === "ON" && !snapshot.playerView.controlRoom) {
     const world = game.worldState as unknown as WorldState;
     await attachControlRoomView(gameId, world, snapshot);
     await prisma.game.update({
@@ -407,7 +417,7 @@ export async function submitTurn(
 
   // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
-  if (!outcome.failure && llmMode() === "ON") {
+  if (!fastMode() && !outcome.failure && llmMode() === "ON") {
     try {
       const pkg = await llmGenerateTurnPackage({
         world: nextWorld,
@@ -435,7 +445,7 @@ export async function submitTurn(
   const finalOutcome: TurnOutcome = failure ? { ...outcome, failure } : outcome;
 
   // Optional LLM-generated dossier refresh for the *next* snapshot.
-  if (llmMode() === "ON") {
+  if (!fastMode() && llmMode() === "ON") {
     try {
       const ind = finalOutcome.nextSnapshot.playerView.indicators;
       const dossier = await llmGenerateCountryProfile({
@@ -455,7 +465,9 @@ export async function submitTurn(
   }
 
   // Optional LLM-generated control-room view model for the *next* snapshot.
-  await attachControlRoomView(gameId, nextWorld, finalOutcome.nextSnapshot);
+  if (!fastMode()) {
+    await attachControlRoomView(gameId, nextWorld, finalOutcome.nextSnapshot);
+  }
 
   // Capture after-state for logging. Must be cloned because `nextWorld` continues to be mutated (LLM turn package, etc.)
   const worldAfter = structuredClone(nextWorld) as WorldState;
