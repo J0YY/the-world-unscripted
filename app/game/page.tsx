@@ -60,7 +60,7 @@ export default function GameControlRoomPage() {
         <GlobalPressureFieldPage
           snapshot={snap}
           bottomSlot={
-            <div className="border border-[var(--ds-gray-alpha-200)] rounded bg-[var(--ds-gray-alpha-100)] p-3">
+            <div className="action-console border border-[var(--ds-gray-alpha-200)] rounded bg-[var(--ds-gray-alpha-100)] p-3">
               <ActionConsole templates={snap.actionTemplates} actionLimit={snap.actionLimit} onSubmit={onSubmit} />
             </div>
           }

@@ -10,6 +10,7 @@ import HotspotList from "./HotspotList";
 import LayerToggle from "./LayerToggle";
 import SignalsStrip from "./SignalsStrip";
 import BriefingFeed from "./BriefingFeed";
+import TourButton from "./TourButton";
 
 const PixelWorldMap = dynamic(() => import("./PixelWorldMap"), {
   ssr: false,
@@ -45,6 +46,7 @@ export default function GlobalPressureFieldPage({
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <TourButton />
           <div className="px-2.5 py-1 bg-[var(--ds-gray-alpha-100)] border border-[var(--ds-gray-alpha-200)] rounded text-xs font-mono">
             <span className="text-[var(--ds-gray-900)]">Turn</span>{" "}
             <span className="text-[var(--ds-gray-1000)] font-medium">{derived.turn}</span>
@@ -57,16 +59,20 @@ export default function GlobalPressureFieldPage({
 
       <div className="flex flex-col lg:flex-row gap-4">
         <div className="w-full lg:w-64 xl:w-72 flex-shrink-0 space-y-6">
-          <WorldPressure
-            pressureIndex={derived.pressureIndex}
-            deltaPerTurn={derived.deltaPerTurn}
-            narrativeGravity={derived.narrativeGravity}
-            systemStrain={derived.systemStrain}
-          />
-          <HotspotList mode={mode} hotspots={derived.hotspots} />
+          <div id="gpf-pressure">
+            <WorldPressure
+              pressureIndex={derived.pressureIndex}
+              deltaPerTurn={derived.deltaPerTurn}
+              narrativeGravity={derived.narrativeGravity}
+              systemStrain={derived.systemStrain}
+            />
+          </div>
+          <div id="gpf-hotspots">
+            <HotspotList mode={mode} hotspots={derived.hotspots} />
+          </div>
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0" id="gpf-map">
           <LayerToggle
             mode={mode}
             onModeChange={setMode}
@@ -89,7 +95,9 @@ export default function GlobalPressureFieldPage({
         </div>
 
         <div className="w-full lg:w-72 xl:w-96 flex-shrink-0 space-y-3">
-          <BriefingFeed briefings={derived.briefings} />
+          <div id="gpf-feed">
+            <BriefingFeed briefings={derived.briefings} />
+          </div>
           {rightSlot}
         </div>
       </div>
