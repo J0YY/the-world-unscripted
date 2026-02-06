@@ -3,17 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "DATABASE_URL=file:./db/unscripted.db next dev --hostname 127.0.0.1",
+    "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
-    "start": "DATABASE_URL=file:./db/unscripted.db next start --hostname 127.0.0.1",
+    "start": "next start --hostname 127.0.0.1",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "npm run db:generate",
-    "db:generate": "DATABASE_URL=file:./db/unscripted.db prisma generate",
-    "db:setup": "DATABASE_URL=file:./db/unscripted.db prisma migrate deploy && npm run db:generate",
-    "db:migrate": "DATABASE_URL=file:./db/unscripted.db prisma migrate dev",
-    "db:studio": "DATABASE_URL=file:./db/unscripted.db prisma studio"
+    "db:generate": "DATABASE_URL=file:../unscripted.db prisma generate --schema=./db/prisma/schema.prisma",
+    "db:setup": "DATABASE_URL=file:../unscripted.db prisma migrate deploy --schema=./db/prisma/schema.prisma && npm run db:generate",
+    "db:migrate": "DATABASE_URL=file:../unscripted.db prisma migrate dev --schema=./db/prisma/schema.prisma",
+    "db:studio": "DATABASE_URL=file:../unscripted.db prisma studio --schema=./db/prisma/schema.prisma"
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",

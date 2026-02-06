@@ -70,7 +70,7 @@ export default function IntelChatbot({ llmMode }: { llmMode?: "ON" | "OFF" }) {
 
       <div 
         ref={scrollRef}
-        className="h-64 overflow-y-auto mb-3 space-y-3 pr-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+        className="h-50 overflow-y-auto mb-3 space-y-3 pr-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
       >
         {messages.map((m) => (
           <div key={m.id} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>

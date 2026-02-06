@@ -10,6 +10,7 @@ import HotspotList from "./HotspotList";
 import LayerToggle from "./LayerToggle";
 import SignalsStrip from "./SignalsStrip";
 import BriefingFeed from "./BriefingFeed";
+import IntelChatbot from "./IntelChatbot";
 import TourButton from "./TourButton";
 
 const PixelWorldMap = dynamic(() => import("./PixelWorldMap"), {
@@ -69,6 +70,9 @@ export default function GlobalPressureFieldPage({
           </div>
           <div id="gpf-hotspots">
             <HotspotList mode={mode} hotspots={derived.hotspots} />
+          </div>
+          <div id="gpf-intel">
+            <IntelChatbot llmMode={snapshot.llmMode} />
           </div>
         </div>
 
