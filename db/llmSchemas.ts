@@ -207,3 +207,30 @@ export const LlmSuggestDirectiveSchema = z.object({
   redFlags: z.array(z.string().min(10).max(200)).min(0).max(6),
   questions: z.array(z.string().min(8).max(160)).min(0).max(5),
 });
+
+export const LlmResolutionSchema = z.object({
+  headline: z.string().min(10).max(160),
+  narrative: z.array(z.string().min(8).max(220)).min(4).max(18),
+  directiveImpact: z
+    .array(
+      z.object({
+        directiveFragment: z.string().min(4).max(120),
+        translatedOps: z.array(z.string().min(6).max(140)).min(0).max(4),
+        observedEffects: z.array(z.string().min(8).max(160)).min(1).max(5),
+      }),
+    )
+    .min(2)
+    .max(8),
+  perceptions: z
+    .array(
+      z.object({
+        actor: z.string().min(2).max(40),
+        posture: z.enum(["hostile", "neutral", "friendly"]),
+        read: z.string().min(10).max(160),
+      }),
+    )
+    .min(2)
+    .max(8),
+  threats: z.array(z.string().min(10).max(180)).min(2).max(7),
+  nextMoves: z.array(z.string().min(10).max(200)).min(2).max(6),
+});

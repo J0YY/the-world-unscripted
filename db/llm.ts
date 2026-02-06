@@ -5,6 +5,7 @@ import {
   LlmCountryProfileSchema,
   LlmGenerateTurnPackageSchema,
   LlmParseDirectiveSchema,
+  LlmResolutionSchema,
   LlmRewriteTurnSchema,
   LlmSuggestDirectiveSchema,
 } from "./llmSchemas";
@@ -569,6 +570,76 @@ export async function llmSuggestDirectives(args: { world: WorldState }): Promise
     user,
     schemaName: "LlmSuggestDirectiveSchema",
     validate: (obj) => LlmSuggestDirectiveSchema.parse(obj),
+    temperature: 0.6,
+  });
+
+  return { data, llmRaw: raw };
+}
+
+export async function llmGenerateResolution(args: {
+  turnNumber: number;
+  directive?: string;
+  translatedActions: Array<{ kind: string; summary: string }>;
+  deltas: Array<{ label: string; before: number; after: number; delta: number }>;
+  actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
+  threats: string[];
+  worldBefore: WorldState;
+  worldAfter: WorldState;
+}): Promise<{ data: z.infer<typeof LlmResolutionSchema>; llmRaw: unknown }> {
+  const system = [
+    "You write the end-of-turn resolution briefing for a geopolitical simulation.",
+    "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
+    "Make the player's directive impact EXTREMELY obvious: connect directive fragments -> translated ops -> observed effects.",
+    "Use specific, grounded intelligence language. No fantasy.",
+    "Do NOT reveal internal raw state dumps. You MAY reference the provided deltas (numbers) directly, because they are player-facing scores.",
+  ].join("\n");
+
+  const user = [
+    `TURN_RESOLVED: ${args.turnNumber}`,
+    "",
+    "PLAYER_DIRECTIVE (may be empty):",
+    args.directive?.trim() ? args.directive.trim() : "(none)",
+    "",
+    "TRANSLATED_ACTIONS (what the system executed):",
+    JSON.stringify(args.translatedActions, null, 2),
+    "",
+    "SCORE_DELTAS (player-facing):",
+    JSON.stringify(args.deltas, null, 2),
+    "",
+    "ACTOR_SHIFTS (perceptions):",
+    JSON.stringify(args.actorShifts, null, 2),
+    "",
+    "TOP_THREATS (derived):",
+    JSON.stringify(args.threats, null, 2),
+    "",
+    "WORLD_CONTEXT_BEFORE (qualitative summary):",
+    JSON.stringify(summarizeWorldForLlm(args.worldBefore), null, 2),
+    "",
+    "WORLD_CONTEXT_AFTER (qualitative summary):",
+    JSON.stringify(summarizeWorldForLlm(args.worldAfter), null, 2),
+    "",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        headline: "string",
+        narrative: ["string"],
+        directiveImpact: [
+          { directiveFragment: "string", translatedOps: ["string"], observedEffects: ["string"] },
+        ],
+        perceptions: [{ actor: "string", posture: "hostile|neutral|friendly", read: "string" }],
+        threats: ["string"],
+        nextMoves: ["string"],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const { data, raw } = await chatJson({
+    system,
+    user,
+    schemaName: "LlmResolutionSchema",
+    validate: (obj) => LlmResolutionSchema.parse(obj),
     temperature: 0.6,
   });
 

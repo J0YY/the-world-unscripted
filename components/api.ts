@@ -34,6 +34,10 @@ export async function apiTurnHistory(gameId: string): Promise<{ turns: Array<{ t
   );
 }
 
+export async function apiResolutionReport(gameId: string, turnNumber: number): Promise<unknown> {
+  return jsonFetch(`/api/game/resolution?gameId=${encodeURIComponent(gameId)}&turn=${encodeURIComponent(String(turnNumber))}`);
+}
+
 export async function apiSubmitTurn(gameId: string, actions: PlayerAction[]): Promise<TurnOutcome> {
   return jsonFetch<TurnOutcome>("/api/game/submit-turn", {
     method: "POST",
