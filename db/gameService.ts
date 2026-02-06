@@ -186,6 +186,16 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
       intelligenceClarity: snap.playerView.indicators.intelligenceClarity,
     });
   }
+
+  // Backfill control-room view (LLM-first) so UI uses LLM for Pressure/Hotspots/Signals/Feed immediately.
+  if (llmMode() === "ON" && !snap.playerView.controlRoom) {
+    const world = game.worldState as unknown as WorldState;
+    await attachControlRoomView(game.id, world, snap);
+    await prisma.game.update({
+      where: { id: game.id },
+      data: { lastPlayerSnapshot: snap as unknown as object },
+    });
+  }
   return snap;
 }
 
@@ -205,6 +215,16 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
       intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
     });
     // Persist upgraded snapshot shape.
+    await prisma.game.update({
+      where: { id: gameId },
+      data: { lastPlayerSnapshot: snapshot as unknown as object },
+    });
+  }
+
+  // Backfill control-room view (LLM-first) so existing games render from LLM without requiring a new turn.
+  if (snapshot.llmMode === "ON" && !snapshot.playerView.controlRoom) {
+    const world = game.worldState as unknown as WorldState;
+    await attachControlRoomView(gameId, world, snapshot);
     await prisma.game.update({
       where: { id: gameId },
       data: { lastPlayerSnapshot: snapshot as unknown as object },
