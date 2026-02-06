@@ -2,18 +2,13 @@ import type { IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
 import { LlmGenerateTurnPackageSchema, LlmParseDirectiveSchema, LlmRewriteTurnSchema } from "./llmSchemas";
 
-const DEFAULT_MODEL = "gpt-4.1-mini";
+const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 export type LlmMode = "OFF" | "ON";
 
 export function llmMode(): LlmMode {
-  return process.env.OPENAI_API_KEY ? "ON" : "OFF";
-}
-
-function requireKey(): string {
-  const k = process.env.OPENAI_API_KEY;
-  if (!k) throw new Error("OPENAI_API_KEY not configured on server");
-  return k;
+  return (process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY) ? "ON" : "OFF";
 }
 
 async function chatJson<T>(args: {
@@ -23,7 +18,73 @@ async function chatJson<T>(args: {
   validate: (obj: unknown) => T;
   temperature?: number;
 }): Promise<{ data: T; raw: unknown }> {
-  const key = requireKey();
+  if (process.env.GEMINI_API_KEY) {
+    return chatJsonGemini(args);
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return chatJsonOpenAI(args);
+  }
+  throw new Error("No LLM API keys configured (OPENAI_API_KEY or GEMINI_API_KEY)");
+}
+
+async function chatJsonGemini<T>(args: {
+  system: string;
+  user: string;
+  schemaName: string;
+  validate: (obj: unknown) => T;
+  temperature?: number;
+}): Promise<{ data: T; raw: unknown }> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) throw new Error("GEMINI_API_KEY not configured");
+
+  const model = process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: args.system }] },
+      contents: [{ role: "user", parts: [{ text: args.user }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: args.temperature ?? 0.7,
+      },
+    }),
+  });
+
+  const payload: any = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = payload.error?.message || `Gemini error (${res.status})`;
+    throw new Error(msg);
+  }
+
+  const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== "string") {
+    throw new Error("Gemini returned no text content");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`LLM (Gemini) returned non-JSON for ${args.schemaName}`);
+  }
+  return { data: args.validate(parsed), raw: parsed };
+}
+
+async function chatJsonOpenAI<T>(args: {
+  system: string;
+  user: string;
+  schemaName: string;
+  validate: (obj: unknown) => T;
+  temperature?: number;
+}): Promise<{ data: T; raw: unknown }> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) throw new Error("OPENAI_API_KEY not configured on server");
+
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -31,7 +92,7 @@ async function chatJson<T>(args: {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? DEFAULT_MODEL,
+      model: process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL,
       temperature: args.temperature ?? 0.7,
       messages: [
         { role: "system", content: args.system },
@@ -307,6 +368,38 @@ export async function llmParsePlayerDirective(args: {
   return { actions: validated, rationale: data.rationale, llmRaw: raw };
 }
 
+export async function llmAgentChat(args: {
+  world: WorldState;
+  userMessage: string;
+}): Promise<string> {
+  const system = [
+    "You are an Intelligent Agency analyst for the player's country.",
+    "Your name is 'Control' or 'Agency'.",
+    "You communicate in brief, professional, slightly paranoid intelligence-speak.",
+    "You have access to the current world state, but you MUST NOT reveal hidden numeric values (raw 0-100 scores).",
+    "Use qualitative terms: low, moderate, high, critical.",
+    "If asked about future outcomes, be probabilistic and cautious.",
+    "The player is the head of state. Address them as 'Sir', 'Madam', or 'Leader'.",
+    "Keep answers under 3 sentences unless asked for a detailed report.",
+    "Refuse to predict the exact random number outcomes.",
+  ].join("\n");
+
+  const context = summarizeWorldForLlm(args.world);
+  const user = [
+    "CONTEXT (qualitative only):",
+    JSON.stringify(context, null, 2),
+    "",
+    "PLAYER_MESSAGE:",
+    args.userMessage,
+  ].join("\n");
+
+  return llmChat({
+    system,
+    user,
+    temperature: 0.7,
+  });
+}
+
 function summarizeWorldForLlm(world: WorldState) {
   const p = world.player;
   return {
@@ -368,4 +461,73 @@ function leaksNumbers(s: string): boolean {
   if (/\b\d{1,3}\s*\/\s*100\b/.test(s)) return true;
   if (/\b\d{1,3}\s+(out of)\s+100\b/i.test(s)) return true;
   return false;
+}
+
+export async function llmChat(args: {
+  system: string;
+  user: string;
+  temperature?: number;
+}): Promise<string> {
+  if (process.env.GEMINI_API_KEY) {
+    return chatTextGemini(args);
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return chatTextOpenAI(args);
+  }
+  throw new Error("No LLM API keys configured");
+}
+
+async function chatTextGemini(args: {
+  system: string;
+  user: string;
+  temperature?: number;
+}): Promise<string> {
+  const key = process.env.GEMINI_API_KEY!;
+  const model = process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: args.system }] },
+      contents: [{ role: "user", parts: [{ text: args.user }] }],
+      generationConfig: { temperature: args.temperature ?? 0.7 },
+    }),
+  });
+
+  const payload: any = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(payload.error?.message || `Gemini error (${res.status})`);
+
+  const text = payload.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (typeof text !== "string") throw new Error("Gemini returned no text content");
+  return text;
+}
+
+async function chatTextOpenAI(args: {
+  system: string;
+  user: string;
+  temperature?: number;
+}): Promise<string> {
+  const key = process.env.OPENAI_API_KEY!;
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: process.env.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL,
+      temperature: args.temperature ?? 0.7,
+      messages: [
+        { role: "system", content: args.system },
+        { role: "user", content: args.user },
+      ],
+    }),
+  });
+
+  const payload: unknown = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`OpenAI error (${res.status})`);
+
+  return extractChatContent(payload);
 }

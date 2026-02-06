@@ -56,7 +56,7 @@ export default function GameControlRoomPage() {
 
   return (
     <>
-      <Shell title={title}>
+      <Shell title={title} llmMode={snap.llmMode}>
         <GlobalPressureFieldPage
           snapshot={snap}
           bottomSlot={
@@ -79,13 +79,29 @@ export default function GameControlRoomPage() {
 function Shell({
   title,
   children,
+  llmMode,
 }: {
   title: string;
   children: React.ReactNode;
+  llmMode?: "ON" | "OFF";
 }) {
   return (
     <div className="min-h-screen bg-[var(--ds-background-100)] px-0 py-0 font-mono [--font-sans:var(--font-mono)]">
       <div className="mx-auto w-full max-w-[1800px]">
+        {/* Header / Top Bar */}
+        <div className="pointer-events-none fixed top-4 right-4 z-50 flex items-center gap-2 mix-blend-difference">
+           {llmMode && (
+             <div className={`flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider border ${
+               llmMode === "ON" 
+                 ? "border-emerald-500/50 text-emerald-400 bg-emerald-950/30" 
+                 : "border-neutral-500/50 text-neutral-500 bg-neutral-900/30"
+             }`}>
+                <div className={`h-1.5 w-1.5 rounded-full ${llmMode === "ON" ? "bg-emerald-400 animate-pulse" : "bg-neutral-600"}`} />
+                AI {llmMode}
+             </div>
+           )}
+        </div>
+        
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="sr-only">THE UNSCRIPTED WORLD ORDER</div>
