@@ -234,3 +234,56 @@ export const LlmResolutionSchema = z.object({
   threats: z.array(z.string().min(10).max(180)).min(2).max(7),
   nextMoves: z.array(z.string().min(10).max(200)).min(2).max(6),
 });
+
+const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
+
+export const LlmControlRoomViewSchema = z.object({
+  pressure: z.object({
+    pressureIndex: z.number().int().min(0).max(100),
+    deltaPerTurn: z.number().int().min(-25).max(25),
+    narrativeGravity: z.number().int().min(0).max(100),
+    systemStrain: z.number().int().min(0).max(100),
+    note: z.string().min(6).max(140).optional(),
+  }),
+  hotspots: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(80),
+        region: z.string().min(3).max(80),
+        value: z.number().int().min(0).max(100),
+        trend: z.enum(["up", "down", "stable"]),
+        color: HexColorSchema,
+        why: z.string().min(6).max(140).optional(),
+      }),
+    )
+    .min(3)
+    .max(8),
+  signals: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(40),
+        label: z.string().min(3).max(40),
+        intensity: z.number().min(0).max(1),
+        confidence: z.enum(["LOW", "MED", "HIGH"]),
+        why: z.string().min(6).max(140).optional(),
+      }),
+    )
+    .min(4)
+    .max(10),
+  briefings: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(80),
+        timestamp: z.string().min(1).max(16),
+        source: z.enum(["Intercept", "Foreign Desk", "Markets", "Embassy Cable"]),
+        content: z.string().min(10).max(380),
+      }),
+    )
+    .min(4)
+    .max(14),
+  generatedBy: z.literal("llm"),
+  memory: z.object({
+    previousTurnsUsed: z.number().int().min(0).max(5),
+    continuityNotes: z.array(z.string().min(6).max(160)).max(6).optional(),
+  }),
+});

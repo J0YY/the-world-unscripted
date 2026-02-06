@@ -1,7 +1,14 @@
 import { prisma } from "./client";
 import { buildCountryProfile, PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
-import { llmGenerateCountryProfile, llmGenerateResolution, llmGenerateTurnPackage, llmMode, llmParsePlayerDirective } from "./llm";
+import {
+  llmGenerateControlRoomView,
+  llmGenerateCountryProfile,
+  llmGenerateResolution,
+  llmGenerateTurnPackage,
+  llmMode,
+  llmParsePlayerDirective,
+} from "./llm";
 import { ensureDbSchema } from "./ensureDb";
 
 function extractAfterSnapshot(playerSnapshot: unknown): GameSnapshot | null {
@@ -40,6 +47,42 @@ function extractBeforeWorld(worldState: unknown): WorldState | null {
     if (before && typeof before === "object" && "turn" in before) return before as WorldState;
   }
   return null;
+}
+
+async function attachControlRoomView(gameId: string, world: WorldState, snapshot: GameSnapshot): Promise<void> {
+  if (llmMode() !== "ON") return;
+  try {
+    const recent = await prisma.turnLog.findMany({
+      where: { gameId },
+      orderBy: { turnNumber: "desc" },
+      take: 3,
+    });
+
+    const memory = recent
+      .map((r) => {
+        const snapAfter = extractAfterSnapshot(r.playerSnapshot);
+        const artifacts = (r.llmArtifacts as unknown as Record<string, unknown> | null) ?? null;
+        const resolution = artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] : null;
+        const resolutionHeadline =
+          resolution &&
+          typeof resolution === "object" &&
+          "headline" in resolution &&
+          typeof (resolution as Record<string, unknown>).headline === "string"
+            ? String((resolution as Record<string, unknown>).headline)
+            : undefined;
+        return {
+          turn: r.turnNumber,
+          resolutionHeadline,
+          controlRoom: snapAfter?.playerView?.controlRoom ?? null,
+        };
+      })
+      .reverse();
+
+    const out = await llmGenerateControlRoomView({ snapshot, world, memory });
+    snapshot.playerView.controlRoom = out.data as unknown as GameSnapshot["playerView"]["controlRoom"];
+  } catch {
+    // Ignore: UI will fall back to deterministic derivations.
+  }
 }
 
 function newSeed(): string {
@@ -97,6 +140,9 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
       // Ignore: keep deterministic dossier.
     }
   }
+
+  // Optional LLM-generated control-room view model for this turn.
+  await attachControlRoomView(game.id, world, snapshot);
 
   await prisma.game.update({
     where: { id: game.id },
@@ -258,6 +304,9 @@ export async function submitTurn(
       // Ignore: keep deterministic dossier.
     }
   }
+
+  // Optional LLM-generated control-room view model for the *next* snapshot.
+  await attachControlRoomView(gameId, nextWorld, finalOutcome.nextSnapshot);
 
   await prisma.$transaction(async (tx) => {
     await tx.turnLog.create({

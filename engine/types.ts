@@ -159,6 +159,44 @@ export type IncomingEvent = {
 
 export type PlayerIncomingEvent = Omit<IncomingEvent, "hiddenPayload">;
 
+export type ControlRoomView = {
+  // Numeric widgets shown in the control room. These are player-facing.
+  pressure: {
+    pressureIndex: number; // 0-100
+    deltaPerTurn: number; // -25..25 (display only)
+    narrativeGravity: number; // 0-100
+    systemStrain: number; // 0-100
+    note?: string;
+  };
+  hotspots: Array<{
+    id: string;
+    region: string;
+    value: number; // 0-100
+    trend: "up" | "down" | "stable";
+    color: string; // e.g. #dc2626
+    why?: string;
+  }>;
+  signals: Array<{
+    id: string;
+    label: string;
+    intensity: number; // 0..1
+    confidence: "LOW" | "MED" | "HIGH";
+    why?: string;
+  }>;
+  briefings: Array<{
+    id: string;
+    timestamp: string;
+    source: "Intercept" | "Foreign Desk" | "Markets" | "Embassy Cable";
+    content: string;
+  }>;
+  // Minimal memory marker so UI can show provenance.
+  generatedBy: "llm";
+  memory: {
+    previousTurnsUsed: number;
+    continuityNotes?: string[];
+  };
+};
+
 export type Briefing = {
   text: string;
   headlines: string[];
@@ -198,6 +236,7 @@ export type PlayerViewState = {
   };
   briefing: Briefing;
   incomingEvents: PlayerIncomingEvent[];
+  controlRoom?: ControlRoomView;
 };
 
 export type CountryProfile = {

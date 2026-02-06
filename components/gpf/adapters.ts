@@ -26,6 +26,7 @@ export type GpfDerived = {
 
 export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
   const ind = snapshot.playerView.indicators;
+  const cr = snapshot.playerView.controlRoom;
 
   const legitimacy = ind.legitimacy.estimatedValue;
   const elite = ind.eliteCohesion.estimatedValue;
@@ -38,7 +39,7 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
   const sov = ind.sovereigntyIntegrity.estimatedValue;
   const war = ind.warStatus.estimatedValue;
 
-  const pressureIndex = Math.round(
+  const pressureIndexDet = Math.round(
     clamp(
       (100 - sov) * 0.32 +
         unrest * 0.2 +
@@ -51,14 +52,14 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
     ),
   );
 
-  const narrativeGravity = Math.round(clamp((100 - intel) * 0.55 + pressureIndex * 0.45, 0, 100));
-  const systemStrain = Math.round(clamp((100 - econ) * 0.55 + infl * 0.25 + war * 0.2, 0, 100));
+  const narrativeGravityDet = Math.round(clamp((100 - intel) * 0.55 + pressureIndexDet * 0.45, 0, 100));
+  const systemStrainDet = Math.round(clamp((100 - econ) * 0.55 + infl * 0.25 + war * 0.2, 0, 100));
 
   const periodLabel = `Turn ${snapshot.turn}`;
 
   const confidence = confToUi(ind.intelligenceClarity.confidence);
 
-  const signals: UiSignal[] = [
+  const signalsDet: UiSignal[] = [
     {
       id: "coup",
       label: "Coup Risk",
@@ -97,8 +98,25 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
     },
   ];
 
-  const hotspots = deriveHotspots(snapshot, pressureIndex);
-  const briefings = deriveBriefingFeed(snapshot);
+  const hotspotsDet = deriveHotspots(snapshot, pressureIndexDet);
+  const briefingsDet = deriveBriefingFeed(snapshot);
+
+  const pressureIndex = cr?.pressure?.pressureIndex ?? pressureIndexDet;
+  const narrativeGravity = cr?.pressure?.narrativeGravity ?? narrativeGravityDet;
+  const systemStrain = cr?.pressure?.systemStrain ?? systemStrainDet;
+  const deltaPerTurn = cr?.pressure?.deltaPerTurn ?? 0;
+
+  const signals: UiSignal[] = cr?.signals?.length
+    ? cr.signals.map((s) => ({ id: s.id, label: s.label, intensity: s.intensity, confidence: s.confidence }))
+    : signalsDet;
+
+  const hotspots: UiHotspot[] = cr?.hotspots?.length
+    ? cr.hotspots.map((h) => ({ id: h.id, region: h.region, value: h.value, trend: h.trend, color: h.color }))
+    : hotspotsDet;
+
+  const briefings: UiBriefingItem[] = cr?.briefings?.length
+    ? cr.briefings.map((b) => ({ id: b.id, timestamp: b.timestamp, source: b.source, content: b.content }))
+    : briefingsDet;
 
   const homeRegion = inferHomeRegion(snapshot);
   const hotspotClusters = deriveClusters(snapshot, homeRegion, pressureIndex, hotspots);
@@ -108,7 +126,7 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
     turn: snapshot.turn,
     periodLabel,
     pressureIndex,
-    deltaPerTurn: 0,
+    deltaPerTurn,
     narrativeGravity,
     systemStrain,
     hotspots,

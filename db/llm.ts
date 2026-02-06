@@ -1,7 +1,8 @@
-import type { CountryProfile, IncomingEvent, PlayerAction, WorldState } from "@/engine";
+import type { CountryProfile, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
 import type { z } from "zod";
 import {
+  LlmControlRoomViewSchema,
   LlmCountryProfileSchema,
   LlmGenerateTurnPackageSchema,
   LlmParseDirectiveSchema,
@@ -641,6 +642,88 @@ export async function llmGenerateResolution(args: {
     schemaName: "LlmResolutionSchema",
     validate: (obj) => LlmResolutionSchema.parse(obj),
     temperature: 0.6,
+  });
+
+  return { data, llmRaw: raw };
+}
+
+export async function llmGenerateControlRoomView(args: {
+  snapshot: GameSnapshot;
+  world: WorldState;
+  memory: Array<{
+    turn: number;
+    resolutionHeadline?: string;
+    continuityNotes?: string[];
+    controlRoom?: unknown;
+  }>;
+}): Promise<{ data: z.infer<typeof LlmControlRoomViewSchema>; llmRaw: unknown }> {
+  const canon = {
+    turn: args.snapshot.turn,
+    country: args.snapshot.countryProfile.name,
+    neighbors: args.snapshot.countryProfile.neighbors,
+    regimeType: args.snapshot.countryProfile.regimeType,
+  };
+
+  const system = [
+    "You are generating the player-facing Control Room dashboard state for a geopolitical simulation.",
+    "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
+    "Make the dashboard feel like intelligence: terse labels, meaningful weights, and grounded regions.",
+    "You MUST NOT contradict the provided canonical turn/country/neighbors/regimeType.",
+    "All numeric widgets MUST be within bounds (0-100 for indices; 0..1 for intensities).",
+    "Use colors as hex (#RRGGBB). Use 3-8 hotspots, 4-10 signals, 4-14 briefing items.",
+    "Your output should reflect continuity with prior turns (memory).",
+  ].join("\n");
+
+  const user = [
+    "CANONICAL (must match):",
+    JSON.stringify(canon, null, 2),
+    "",
+    "PLAYER-FACING SNAPSHOT (current turn):",
+    JSON.stringify(
+      {
+        turn: args.snapshot.turn,
+        countryProfile: args.snapshot.countryProfile,
+        indicators: args.snapshot.playerView.indicators,
+        incomingEvents: args.snapshot.playerView.incomingEvents,
+        briefing: args.snapshot.playerView.briefing,
+      },
+      null,
+      2,
+    ),
+    "",
+    "WORLD CONTEXT (qualitative only):",
+    JSON.stringify(summarizeWorldForLlm(args.world), null, 2),
+    "",
+    "MEMORY (recent turns, may be empty):",
+    JSON.stringify(args.memory, null, 2),
+    "",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        pressure: {
+          pressureIndex: 67,
+          deltaPerTurn: 3,
+          narrativeGravity: 72,
+          systemStrain: 59,
+          note: "string (optional)",
+        },
+        hotspots: [{ id: "string", region: "string", value: 70, trend: "up", color: "#dc2626", why: "optional" }],
+        signals: [{ id: "string", label: "string", intensity: 0.4, confidence: "MED", why: "optional" }],
+        briefings: [{ id: "string", timestamp: "now", source: "Markets", content: "string" }],
+        generatedBy: "llm",
+        memory: { previousTurnsUsed: 2, continuityNotes: ["optional"] },
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const { data, raw } = await chatJson({
+    system,
+    user,
+    schemaName: "LlmControlRoomViewSchema",
+    validate: (obj) => LlmControlRoomViewSchema.parse(obj),
+    temperature: 0.55,
   });
 
   return { data, llmRaw: raw };
