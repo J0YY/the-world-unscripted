@@ -1,5 +1,5 @@
 import type { GameSnapshot } from "@/engine";
-import type { GeoPoint, HotspotCluster, UiBriefingItem, UiHotspot, UiSignal, UiSignalConfidence } from "./types";
+import type { GeoPoint, HotspotCluster, MapMode, UiBriefingItem, UiHotspot, UiSignal, UiSignalConfidence } from "./types";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -121,10 +121,49 @@ export function deriveGpf(snapshot: GameSnapshot): GpfDerived {
   const homeRegion = cr?.map?.homeRegion ?? inferHomeRegion(snapshot);
 
   const clustersPressure =
-    cr?.map?.clustersByMode?.pressure ?? deriveClusters(snapshot, homeRegion, pressureIndex, hotspots);
-  const clustersNarrative = cr?.map?.clustersByMode?.narrative ?? clustersPressure;
-  const clustersEntanglement = cr?.map?.clustersByMode?.entanglement ?? clustersPressure;
-  const clustersSentiment = cr?.map?.clustersByMode?.sentiment ?? clustersPressure;
+    cr?.map?.clustersByMode?.pressure ??
+    deriveClustersForMode({
+      snapshot,
+      mode: "pressure",
+      home: homeRegion,
+      pressureIndex,
+      narrativeGravity,
+      systemStrain,
+      hotspots,
+    });
+  const clustersNarrative =
+    cr?.map?.clustersByMode?.narrative ??
+    deriveClustersForMode({
+      snapshot,
+      mode: "narrative",
+      home: homeRegion,
+      pressureIndex,
+      narrativeGravity,
+      systemStrain,
+      hotspots,
+    });
+  const clustersEntanglement =
+    cr?.map?.clustersByMode?.entanglement ??
+    deriveClustersForMode({
+      snapshot,
+      mode: "entanglement",
+      home: homeRegion,
+      pressureIndex,
+      narrativeGravity,
+      systemStrain,
+      hotspots,
+    });
+  const clustersSentiment =
+    cr?.map?.clustersByMode?.sentiment ??
+    deriveClustersForMode({
+      snapshot,
+      mode: "sentiment",
+      home: homeRegion,
+      pressureIndex,
+      narrativeGravity,
+      systemStrain,
+      hotspots,
+    });
 
   const fogRegions = cr?.map?.fogRegions ?? deriveFogRegions(snapshot, homeRegion);
 
@@ -281,28 +320,86 @@ function inferHomeRegion(snapshot: GameSnapshot): GeoPoint {
   return { lat: 38.9, lon: -77.0 };
 }
 
-function deriveClusters(
-  snapshot: GameSnapshot,
-  home: GeoPoint,
-  pressureIndex: number,
-  hotspots: UiHotspot[],
-): HotspotCluster[] {
-  const high = pressureIndex >= 75;
-  const homeIntensity: "high" | "med" | "low" = high ? "high" : pressureIndex >= 55 ? "med" : "low";
+function scalarToIntensity(n: number): "high" | "med" | "low" {
+  return n >= 75 ? "high" : n >= 55 ? "med" : "low";
+}
+
+function modeScalar(args: {
+  mode: MapMode;
+  pressureIndex: number;
+  narrativeGravity: number;
+  systemStrain: number;
+  internationalCredibility: number;
+  warStatus: number;
+}) {
+  switch (args.mode) {
+    case "pressure":
+      return args.pressureIndex;
+    case "narrative":
+      return args.narrativeGravity;
+    case "entanglement":
+      return args.systemStrain;
+    case "sentiment": {
+      // When credibility collapses and war rises, global attitude hardens.
+      return clamp((100 - args.internationalCredibility) * 0.65 + args.warStatus * 0.35, 0, 100);
+    }
+  }
+}
+
+function deriveClustersForMode(args: {
+  snapshot: GameSnapshot;
+  mode: MapMode;
+  home: GeoPoint;
+  pressureIndex: number;
+  narrativeGravity: number;
+  systemStrain: number;
+  hotspots: UiHotspot[];
+}): HotspotCluster[] {
+  const ind = args.snapshot.playerView.indicators;
+  const cred = ind.internationalCredibility.estimatedValue;
+  const war = ind.warStatus.estimatedValue;
+
+  const scalar = modeScalar({
+    mode: args.mode,
+    pressureIndex: args.pressureIndex,
+    narrativeGravity: args.narrativeGravity,
+    systemStrain: args.systemStrain,
+    internationalCredibility: cred,
+    warStatus: war,
+  });
+
+  const high = scalar >= 75;
+  const homeIntensity = scalarToIntensity(scalar);
 
   const base: HotspotCluster[] = [
-    { id: "home", lat: home.lat, lon: home.lon, intensity: homeIntensity, radius: 40, dotCount: high ? 26 : 18 },
+    {
+      id: "home",
+      lat: args.home.lat,
+      lon: args.home.lon,
+      intensity: homeIntensity,
+      radius: args.mode === "entanglement" ? 48 : 40,
+      dotCount: high ? 26 : 18,
+    },
   ];
 
   // A small catalog of global tension points used to render the UI map. Selection is driven by current hotspots.
-  const catalog: Array<Omit<HotspotCluster, "intensity"> & { intensityByType: Record<string, HotspotCluster["intensity"]> }> = [
+  const catalog: Array<
+    Omit<HotspotCluster, "intensity"> & {
+      intensityByModeAndType: Partial<Record<MapMode, Partial<Record<string, HotspotCluster["intensity"]>>>>;
+    }
+  > = [
     {
       id: "baltic",
       lat: 55.5,
       lon: 23.0,
       radius: 40,
       dotCount: 25,
-      intensityByType: { BORDER_INCIDENT: "high", ALLIANCE_SIGNAL: "med" },
+      intensityByModeAndType: {
+        pressure: { BORDER_INCIDENT: "high", ALLIANCE_SIGNAL: "med" },
+        narrative: { ALLIANCE_SIGNAL: "med", CYBER_INTRUSION: "med" },
+        entanglement: { SANCTIONS_WARNING: "med" },
+        sentiment: { BORDER_INCIDENT: "high", ALLIANCE_SIGNAL: "med" },
+      },
     },
     {
       id: "scs",
@@ -310,7 +407,12 @@ function deriveClusters(
       lon: 114.5,
       radius: 50,
       dotCount: 30,
-      intensityByType: { SANCTIONS_WARNING: "med", BORDER_INCIDENT: "high" },
+      intensityByModeAndType: {
+        pressure: { SANCTIONS_WARNING: "med", BORDER_INCIDENT: "high" },
+        narrative: { CYBER_INTRUSION: "med", ALLIANCE_SIGNAL: "low" },
+        entanglement: { SANCTIONS_WARNING: "high", ARMS_INTERDICTION: "med" },
+        sentiment: { SANCTIONS_WARNING: "med", BORDER_INCIDENT: "med" },
+      },
     },
     {
       id: "sahel",
@@ -318,7 +420,12 @@ function deriveClusters(
       lon: 3.0,
       radius: 55,
       dotCount: 20,
-      intensityByType: { INSURGENT_ATTACK: "high", PROTESTS: "med" },
+      intensityByModeAndType: {
+        pressure: { INSURGENT_ATTACK: "high", PROTESTS: "med" },
+        narrative: { PROTESTS: "high", LEAKED_AUDIO: "med" },
+        entanglement: { IMF_CONTACT: "low" },
+        sentiment: { PROTESTS: "high", INSURGENT_ATTACK: "med" },
+      },
     },
     {
       id: "gulf",
@@ -326,7 +433,12 @@ function deriveClusters(
       lon: 52.0,
       radius: 38,
       dotCount: 18,
-      intensityByType: { ENERGY_SHOCK: "high", SANCTIONS_WARNING: "med" },
+      intensityByModeAndType: {
+        pressure: { SANCTIONS_WARNING: "med" },
+        narrative: { ALLIANCE_SIGNAL: "low" },
+        entanglement: { SANCTIONS_WARNING: "high", IMF_CONTACT: "med" },
+        sentiment: { SANCTIONS_WARNING: "med" },
+      },
     },
     {
       id: "eastmed",
@@ -334,7 +446,12 @@ function deriveClusters(
       lon: 34.0,
       radius: 32,
       dotCount: 15,
-      intensityByType: { BORDER_INCIDENT: "med", ARMS_INTERDICTION: "med" },
+      intensityByModeAndType: {
+        pressure: { BORDER_INCIDENT: "med", ARMS_INTERDICTION: "med" },
+        narrative: { LEAKED_AUDIO: "low", CYBER_INTRUSION: "med" },
+        entanglement: { ARMS_INTERDICTION: "high", IMF_CONTACT: "low" },
+        sentiment: { BORDER_INCIDENT: "high", PROTESTS: "med" },
+      },
     },
     {
       id: "andes",
@@ -342,7 +459,35 @@ function deriveClusters(
       lon: -74.0,
       radius: 35,
       dotCount: 12,
-      intensityByType: { IMF_CONTACT: "low" },
+      intensityByModeAndType: {
+        pressure: { IMF_CONTACT: "low" },
+        narrative: { LEAKED_AUDIO: "low" },
+        entanglement: { IMF_CONTACT: "high", SANCTIONS_WARNING: "med" },
+        sentiment: { IMF_CONTACT: "low" },
+      },
+    },
+    {
+      id: "london",
+      lat: 51.5,
+      lon: -0.1,
+      radius: 34,
+      dotCount: 16,
+      intensityByModeAndType: {
+        narrative: { LEAKED_AUDIO: "med", CYBER_INTRUSION: "high" },
+        entanglement: { SANCTIONS_WARNING: "med", IMF_CONTACT: "med" },
+        sentiment: { ALLIANCE_SIGNAL: "low" },
+      },
+    },
+    {
+      id: "singapore",
+      lat: 1.35,
+      lon: 103.82,
+      radius: 34,
+      dotCount: 16,
+      intensityByModeAndType: {
+        narrative: { CYBER_INTRUSION: "med" },
+        entanglement: { SANCTIONS_WARNING: "high", ARMS_INTERDICTION: "med" },
+      },
     },
   ];
 
@@ -350,7 +495,7 @@ function deriveClusters(
   const chosen = new Map<string, HotspotCluster>();
   for (const et of eventTypes) {
     for (const c of catalog) {
-      const intensity = c.intensityByType[et];
+      const intensity = c.intensityByModeAndType?.[args.mode]?.[et];
       if (!intensity) continue;
       if (!chosen.has(c.id)) chosen.set(c.id, { id: c.id, lat: c.lat, lon: c.lon, radius: c.radius, dotCount: c.dotCount, intensity });
     }
@@ -358,15 +503,22 @@ function deriveClusters(
 
   // Fall back to hotspots-driven extra nodes (max 3).
   const extras = Array.from(chosen.values()).slice(0, 3);
-  const fromHotspots = hotspots
-    .slice(0, 2)
+  const fromHotspots = args.hotspots
+    .slice(0, args.mode === "pressure" ? 2 : 1)
     .map((h, i) => ({
       id: `derived-${i}`,
-      lat: home.lat + (i === 0 ? 6 : -8),
-      lon: home.lon + (i === 0 ? 10 : -12),
-      intensity: h.value >= 75 ? "high" : h.value >= 50 ? "med" : "low",
-      radius: 28 + i * 8,
-      dotCount: 14 + i * 4,
+      lat: args.home.lat + (i === 0 ? (args.mode === "narrative" ? 9 : 6) : -8),
+      lon: args.home.lon + (i === 0 ? (args.mode === "entanglement" ? 14 : 10) : -12),
+      intensity:
+        args.mode === "narrative"
+          ? scalarToIntensity((h.value * 0.35 + args.narrativeGravity * 0.65))
+          : args.mode === "entanglement"
+            ? scalarToIntensity((h.value * 0.25 + args.systemStrain * 0.75))
+            : args.mode === "sentiment"
+              ? scalarToIntensity((h.value * 0.25 + (100 - cred) * 0.55 + war * 0.2))
+              : scalarToIntensity(h.value),
+      radius: 28 + i * 8 + (args.mode === "entanglement" ? 8 : 0),
+      dotCount: 14 + i * 4 + (args.mode === "narrative" ? 4 : 0),
     })) satisfies HotspotCluster[];
 
   return [...base, ...extras, ...fromHotspots].slice(0, 6);
