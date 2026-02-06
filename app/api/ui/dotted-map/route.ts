@@ -18,11 +18,8 @@ function candidatePaths(): string[] {
   const cwd = process.cwd();
   return [
     process.env.DOTTED_MAP_PATH || "",
-    // If the UI folder was added inside the repo/workspace:
-    path.join(cwd, "ui-testing-twi-main/app/data/dotted-map-data.json"),
-    path.join(cwd, "../ui-testing-twi-main/app/data/dotted-map-data.json"),
-    // Original location in this machine’s workspace snapshot:
-    "/Users/joyyang/Downloads/ui-testing-twi-main/app/data/dotted-map-data.json",
+    // Default: committed into this repo so clones work out of the box.
+    path.join(cwd, "app/data/dotted-map-data.json"),
   ].filter(Boolean);
 }
 
@@ -40,7 +37,7 @@ export async function GET() {
     return NextResponse.json(
       {
         error:
-          "Dotted map dataset not found. Set DOTTED_MAP_PATH in .env.local to the ui-testing-twi-main/app/data/dotted-map-data.json file.",
+          "Dotted map dataset not found. Commit app/data/dotted-map-data.json or set DOTTED_MAP_PATH in .env.local to point to dotted-map-data.json.",
         tried: candidates,
       },
       { status: 404 },
