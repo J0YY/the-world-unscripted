@@ -28,11 +28,11 @@ export default function GlobalPressureFieldPage({
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
 }) {
-  const [mode, setMode] = useState<MapMode>("pressure");
+  const [mode, setMode] = useState<MapMode>("world-events");
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
 
-  const derived = useMemo(() => deriveGpf(snapshot), [snapshot]);
+  const derived = useMemo(() => deriveGpf(snapshot, mode), [snapshot, mode]);
 
   return (
     <main className="font-mono min-h-screen max-w-[1800px] mx-auto relative overflow-hidden px-4 md:px-6 pt-6 md:pt-8 pb-8">
@@ -84,11 +84,7 @@ export default function GlobalPressureFieldPage({
           <div className="border border-[var(--ds-gray-alpha-200)] rounded overflow-hidden">
             <PixelWorldMap
               mode={mode}
-              intelFog={intelFog}
-              showExposure={showExposure}
-              hotspotClusters={derived.hotspotClusters}
-              homeRegion={derived.homeRegion}
-              fogRegions={derived.fogRegions}
+              countryColors={derived.countryColors}
             />
           </div>
           <SignalsStrip signals={derived.signals} />
