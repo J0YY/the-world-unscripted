@@ -291,6 +291,33 @@ export async function debugExportTrueState(gameId: string): Promise<unknown> {
   };
 }
 
+export async function getTurnHistory(gameId: string): Promise<{
+  turns: Array<{ turn: number; snapshot: GameSnapshot }>;
+}> {
+  const game = await prisma.game.findUnique({ where: { id: gameId } });
+  if (!game) throw new Error("Game not found");
+
+  const rows = await prisma.turnLog.findMany({
+    where: { gameId },
+    orderBy: { turnNumber: "asc" },
+  });
+
+  const byTurn = new Map<number, GameSnapshot>();
+  for (const r of rows) {
+    const snap = r.playerSnapshot as unknown as GameSnapshot;
+    byTurn.set(snap.turn, snap);
+  }
+
+  const latest = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  byTurn.set(latest.turn, latest);
+
+  const turns = Array.from(byTurn.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([turn, snapshot]) => ({ turn, snapshot }));
+
+  return { turns };
+}
+
 async function fillFailureTimeline(
   gameId: string,
   failure: NonNullable<TurnOutcome["failure"]>,

@@ -46,13 +46,13 @@ export default function TourButton() {
             description: "Inbound cables and news tickers. This provides context for the quantitative data on the map.",
           },
         },
-         {
-          element: ".action-console", 
+        {
+          element: ".prompt-console",
           popover: {
-             title: "Action Console",
-             description: "Your primary interface for statecraft. Issue directives and execute operations here."
-          }
-        }
+            title: "Command Deck",
+            description: "Prompt-first interface. Type a directive; the system translates it into operations (when AI is online).",
+          },
+        },
       ],
       onDestroyStarted: () => {
           if(!driverObj.hasNextStep() || confirm("Are you sure you want to exit the tour?")) {

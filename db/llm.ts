@@ -1,6 +1,13 @@
 import type { CountryProfile, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
-import { LlmCountryProfileSchema, LlmGenerateTurnPackageSchema, LlmParseDirectiveSchema, LlmRewriteTurnSchema } from "./llmSchemas";
+import type { z } from "zod";
+import {
+  LlmCountryProfileSchema,
+  LlmGenerateTurnPackageSchema,
+  LlmParseDirectiveSchema,
+  LlmRewriteTurnSchema,
+  LlmSuggestDirectiveSchema,
+} from "./llmSchemas";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
@@ -528,6 +535,44 @@ export async function llmGenerateCountryProfile(args: {
   if (data.neighbors.join("|") !== canon.neighbors.join("|")) throw new Error("LLM countryProfile mismatch: neighbors");
 
   return { countryProfile: data as unknown as CountryProfile, llmRaw: raw };
+}
+
+export async function llmSuggestDirectives(args: { world: WorldState }): Promise<{ data: z.infer<typeof LlmSuggestDirectiveSchema>; llmRaw: unknown }> {
+  const system = [
+    "You are an elite policy planner for the head of state in a geopolitical simulation.",
+    "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
+    "Keep suggestions actionable and phrased as directives the player can type.",
+    "No raw numbers or scores. Use qualitative language (low/moderate/high/critical) if needed.",
+    "Do not contradict the provided context.",
+  ].join("\n");
+
+  const context = summarizeWorldForLlm(args.world);
+  const user = [
+    "CONTEXT (qualitative only):",
+    JSON.stringify(context, null, 2),
+    "",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        situation: { headline: "string", keyDevelopments: ["string"] },
+        suggestions: ["string"],
+        redFlags: ["string"],
+        questions: ["string"],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const { data, raw } = await chatJson({
+    system,
+    user,
+    schemaName: "LlmSuggestDirectiveSchema",
+    validate: (obj) => LlmSuggestDirectiveSchema.parse(obj),
+    temperature: 0.6,
+  });
+
+  return { data, llmRaw: raw };
 }
 
 function summarizeWorldForLlm(world: WorldState) {

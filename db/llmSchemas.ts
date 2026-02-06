@@ -195,3 +195,15 @@ export const LlmCountryProfileSchema = z.object({
   vulnerabilities: z.array(z.string().min(12).max(160)).min(4).max(8),
   generatedBy: z.literal("llm"),
 });
+
+export const LlmSuggestDirectiveSchema = z.object({
+  situation: z
+    .object({
+      headline: z.string().min(10).max(180),
+      keyDevelopments: z.array(z.string().min(10).max(180)).min(2).max(6),
+    })
+    .describe("Brief, player-facing context."),
+  suggestions: z.array(z.string().min(12).max(260)).min(3).max(7),
+  redFlags: z.array(z.string().min(10).max(200)).min(0).max(6),
+  questions: z.array(z.string().min(8).max(160)).min(0).max(5),
+});

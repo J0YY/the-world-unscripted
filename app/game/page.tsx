@@ -2,15 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { GameSnapshot, PlayerAction } from "@/engine";
-import { apiSnapshot, apiSubmitTurn, apiSubmitTurnWithDirective } from "@/components/api";
-import { ActionConsole } from "@/components/ActionConsole";
+import type { GameSnapshot } from "@/engine";
+import { apiSnapshot, apiSubmitTurnWithDirective, apiTurnHistory } from "@/components/api";
 import GlobalPressureFieldPage from "@/components/gpf/GlobalPressureFieldPage";
+import { PromptConsole } from "@/components/PromptConsole";
 import { getStoredGameId, setLastFailure, setLastOutcome } from "@/components/storage";
 
 export default function GameControlRoomPage() {
   const router = useRouter();
   const [snap, setSnap] = useState<GameSnapshot | null>(null);
+  const [turns, setTurns] = useState<Array<{ turn: number; snapshot: GameSnapshot }>>([]);
+  const [turnIdx, setTurnIdx] = useState<number>(-1);
   const [error, setError] = useState<string | null>(null);
   const [isFadingIn, setIsFadingIn] = useState(true);
 
@@ -26,22 +28,39 @@ export default function GameControlRoomPage() {
       router.push("/");
       return;
     }
-    apiSnapshot(gameId)
-      .then((s) => {
-        setSnap(s);
-        if (s.status === "FAILED") router.push("/failure");
+    Promise.all([apiSnapshot(gameId), apiTurnHistory(gameId)])
+      .then(([latest, hist]) => {
+        const all = hist.turns ?? [];
+        // Ensure latest snapshot is present.
+        const byTurn = new Map<number, GameSnapshot>(all.map((t) => [t.turn, t.snapshot]));
+        byTurn.set(latest.turn, latest);
+        const merged = Array.from(byTurn.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([turn, snapshot]) => ({ turn, snapshot }));
+        setTurns(merged);
+        const idx = merged.findIndex((t) => t.turn === latest.turn);
+        setTurnIdx(idx >= 0 ? idx : merged.length - 1);
+        setSnap(latest);
+        if (latest.status === "FAILED") router.push("/failure");
       })
       .catch((e) => setError((e as Error).message));
   }, [router]);
 
   const title = useMemo(() => (snap ? `${snap.countryProfile.name} — Turn ${snap.turn}` : "Control room"), [snap]);
 
-  async function onSubmit(actions: PlayerAction[], directive: string) {
+  const gameId = useMemo(() => getStoredGameId(), []);
+
+  function viewTurnAt(nextIdx: number) {
+    const t = turns[nextIdx];
+    if (!t) return;
+    setTurnIdx(nextIdx);
+    setSnap(t.snapshot);
+  }
+
+  async function onSubmitDirective(directive: string) {
     const gameId = getStoredGameId();
     if (!gameId) return;
-    const outcome = directive?.trim()
-      ? await apiSubmitTurnWithDirective(gameId, actions, directive.trim())
-      : await apiSubmitTurn(gameId, actions);
+    const outcome = await apiSubmitTurnWithDirective(gameId, [], directive.trim());
     setLastOutcome(outcome);
     if (outcome.failure) {
       setLastFailure(outcome.failure);
@@ -60,12 +79,25 @@ export default function GameControlRoomPage() {
         <GlobalPressureFieldPage
           snapshot={snap}
           bottomSlot={
-            <div className="action-console border border-[var(--ds-gray-alpha-200)] rounded bg-[var(--ds-gray-alpha-100)] p-3">
-              <ActionConsole templates={snap.actionTemplates} actionLimit={snap.actionLimit} onSubmit={onSubmit} />
-            </div>
+            // Reserve space so the sticky prompt console doesn't cover content.
+            <div className="h-[28vh]" />
           }
         />
       </Shell>
+
+      {gameId && snap ? (
+        <PromptConsole
+          gameId={gameId}
+          llmMode={snap.llmMode}
+          disabled={turnIdx >= 0 && turnIdx < turns.length - 1}
+          onSubmitDirective={onSubmitDirective}
+          turnLabel={`Turn ${snap.turn}`}
+          canGoPrev={turnIdx > 0}
+          canGoNext={turnIdx >= 0 && turnIdx < turns.length - 1}
+          onPrev={() => viewTurnAt(Math.max(0, turnIdx - 1))}
+          onNext={() => viewTurnAt(Math.min(turns.length - 1, turnIdx + 1))}
+        />
+      ) : null}
 
       <div
         className="fixed inset-0 z-[100] bg-black transition-opacity duration-[2600ms] ease-in-out pointer-events-none"

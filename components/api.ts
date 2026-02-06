@@ -28,6 +28,12 @@ export async function apiSnapshot(gameId: string): Promise<GameSnapshot> {
   return jsonFetch<GameSnapshot>(`/api/game/snapshot?gameId=${encodeURIComponent(gameId)}`);
 }
 
+export async function apiTurnHistory(gameId: string): Promise<{ turns: Array<{ turn: number; snapshot: GameSnapshot }> }> {
+  return jsonFetch<{ turns: Array<{ turn: number; snapshot: GameSnapshot }> }>(
+    `/api/game/turns?gameId=${encodeURIComponent(gameId)}`,
+  );
+}
+
 export async function apiSubmitTurn(gameId: string, actions: PlayerAction[]): Promise<TurnOutcome> {
   return jsonFetch<TurnOutcome>("/api/game/submit-turn", {
     method: "POST",
