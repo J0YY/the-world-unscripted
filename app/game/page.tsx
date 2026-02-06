@@ -18,6 +18,8 @@ export default function GameControlRoomPage() {
   const [isFadingIn, setIsFadingIn] = useState(true);
   const [afterActionOpen, setAfterActionOpen] = useState(false);
   const [afterActionOutcome, setAfterActionOutcome] = useState<TurnOutcome | null>(null);
+  const [afterActionBefore, setAfterActionBefore] = useState<GameSnapshot | null>(null);
+  const [afterActionDirective, setAfterActionDirective] = useState<string>("");
 
   useEffect(() => {
     // Slow dramatic fade-in when entering the control room.
@@ -63,6 +65,7 @@ export default function GameControlRoomPage() {
   async function onSubmitDirective(directive: string) {
     const gameId = getStoredGameId();
     if (!gameId) return;
+    const before = snap;
     const outcome = await apiSubmitTurnWithDirective(gameId, [], directive.trim());
     setLastOutcome(outcome);
     if (outcome.failure) {
@@ -71,6 +74,8 @@ export default function GameControlRoomPage() {
     } else {
       // Advance UI to next snapshot immediately (next turn), and show an after-action modal overlay.
       setAfterActionOutcome(outcome);
+      setAfterActionBefore(before ?? null);
+      setAfterActionDirective(directive.trim());
       setAfterActionOpen(true);
 
       const next = outcome.nextSnapshot;
@@ -107,6 +112,8 @@ export default function GameControlRoomPage() {
           open={afterActionOpen}
           gameId={gameId}
           outcome={afterActionOutcome}
+          beforeSnapshot={afterActionBefore}
+          directiveText={afterActionDirective}
           llmMode={snap.llmMode}
           onClose={() => setAfterActionOpen(false)}
         />

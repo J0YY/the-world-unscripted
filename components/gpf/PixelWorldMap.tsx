@@ -213,7 +213,15 @@ export default function PixelWorldMap({
       }
     });
 
-    return allDots;
+    // Defensive: never hand invalid numbers to SVG.
+    return allDots.filter(
+      (d) =>
+        Number.isFinite(d.x) &&
+        Number.isFinite(d.y) &&
+        Number.isFinite(d.size) &&
+        Number.isFinite(d.delay) &&
+        d.size > 0,
+    );
   }, [projection, mode, hotspotClusters]);
 
   const glowGradients = useMemo(() => {
