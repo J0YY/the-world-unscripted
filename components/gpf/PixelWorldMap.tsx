@@ -227,11 +227,12 @@ export default function PixelWorldMap({
             ? cluster.intensity
             : "low";
         const radius = Number.isFinite(cluster.radius) ? cluster.radius : 32;
+        const r = Number.isFinite(radius * 1.5) ? Math.max(6, radius * 1.5) : 48;
         return {
           id: `glow-${cluster.id}`,
           cx: coords[0],
           cy: coords[1],
-          r: radius * 1.5,
+          r,
           color: colors[intensity],
           intensity,
         };
@@ -293,10 +294,14 @@ export default function PixelWorldMap({
                   key={`bg-${glow.id}`}
                   cx={glow.cx}
                   cy={glow.cy}
-                  r={glow.r}
+                  r={Number.isFinite(glow.r) ? glow.r : 48}
                   fill={`url(#${glow.id})`}
                   animate={{
-                    r: [glow.r * 0.9, glow.r * 1.1, glow.r * 0.9],
+                    r: [
+                      (Number.isFinite(glow.r) ? glow.r : 48) * 0.9,
+                      (Number.isFinite(glow.r) ? glow.r : 48) * 1.1,
+                      (Number.isFinite(glow.r) ? glow.r : 48) * 0.9,
+                    ],
                     opacity: [0.8, 1, 0.8],
                   }}
                   transition={{

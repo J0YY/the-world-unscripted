@@ -2,11 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { GameSnapshot } from "@/engine";
+import type { GameSnapshot, TurnOutcome } from "@/engine";
 import { apiSnapshot, apiSubmitTurnWithDirective, apiTurnHistory } from "@/components/api";
 import GlobalPressureFieldPage from "@/components/gpf/GlobalPressureFieldPage";
 import { PromptConsole } from "@/components/PromptConsole";
 import { getStoredGameId, setLastFailure, setLastOutcome } from "@/components/storage";
+import AfterActionModal from "@/components/AfterActionModal";
 
 export default function GameControlRoomPage() {
   const router = useRouter();
@@ -15,6 +16,8 @@ export default function GameControlRoomPage() {
   const [turnIdx, setTurnIdx] = useState<number>(-1);
   const [error, setError] = useState<string | null>(null);
   const [isFadingIn, setIsFadingIn] = useState(true);
+  const [afterActionOpen, setAfterActionOpen] = useState(false);
+  const [afterActionOutcome, setAfterActionOutcome] = useState<TurnOutcome | null>(null);
 
   useEffect(() => {
     // Slow dramatic fade-in when entering the control room.
@@ -66,7 +69,21 @@ export default function GameControlRoomPage() {
       setLastFailure(outcome.failure);
       router.push("/failure");
     } else {
-      router.push("/resolution");
+      // Advance UI to next snapshot immediately (next turn), and show an after-action modal overlay.
+      setAfterActionOutcome(outcome);
+      setAfterActionOpen(true);
+
+      const next = outcome.nextSnapshot;
+      setSnap(next);
+      setTurns((prev) => {
+        const byTurn = new Map<number, GameSnapshot>(prev.map((t) => [t.turn, t.snapshot]));
+        byTurn.set(next.turn, next);
+        const merged = Array.from(byTurn.entries())
+          .sort((a, b) => a[0] - b[0])
+          .map(([turn, snapshot]) => ({ turn, snapshot }));
+        setTurnIdx(merged.findIndex((t) => t.turn === next.turn));
+        return merged;
+      });
     }
   }
 
@@ -84,6 +101,16 @@ export default function GameControlRoomPage() {
           }
         />
       </Shell>
+
+      {gameId ? (
+        <AfterActionModal
+          open={afterActionOpen}
+          gameId={gameId}
+          outcome={afterActionOutcome}
+          llmMode={snap.llmMode}
+          onClose={() => setAfterActionOpen(false)}
+        />
+      ) : null}
 
       {gameId && snap ? (
         <PromptConsole

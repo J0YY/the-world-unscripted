@@ -12,6 +12,7 @@ export async function GET(req: Request) {
     const url = new URL(req.url);
     const gameId = url.searchParams.get("gameId");
     const turn = url.searchParams.get("turn");
+    const forceLlm = url.searchParams.get("forceLlm") === "1";
     if (!gameId) return NextResponse.json({ error: "Missing gameId" }, { status: 400 });
     if (!turn) return NextResponse.json({ error: "Missing turn" }, { status: 400 });
     const turnNumber = Number(turn);
@@ -27,7 +28,7 @@ export async function GET(req: Request) {
       return NextResponse.json(report);
     }
 
-    const p = getResolutionReport(gameId, turnNumber).finally(() => inflight.delete(key));
+    const p = getResolutionReport(gameId, turnNumber, { forceLlm }).finally(() => inflight.delete(key));
     inflight.set(key, p);
     const report = await p;
     return NextResponse.json(report);

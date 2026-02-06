@@ -593,6 +593,7 @@ function summarizeAction(a: PlayerAction): string {
 export async function getResolutionReport(
   gameId: string,
   turnNumber: number,
+  opts?: { forceLlm?: boolean },
 ): Promise<{
   turnNumber: number;
   directive: string | null;
@@ -711,9 +712,9 @@ export async function getResolutionReport(
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
   if (existing) return { ...base, llm: existing };
 
-  // Fast mode: don't block the resolution API on LLM generation.
+  // Fast mode: don't block the resolution API on LLM generation unless explicitly forced.
   // The UI can render from deterministic `publicResolution` + deltas immediately.
-  if (fastMode()) return base;
+  if (fastMode() && !opts?.forceLlm) return base;
 
   try {
     const llm = await llmGenerateResolution({

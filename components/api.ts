@@ -37,12 +37,14 @@ export async function apiTurnHistory(gameId: string): Promise<{ turns: Array<{ t
 export async function apiResolutionReport(
   gameId: string,
   turnNumber: number,
-  init?: Pick<RequestInit, "signal">,
+  init?: Pick<RequestInit, "signal"> & { forceLlm?: boolean },
 ): Promise<unknown> {
-  return jsonFetch(
-    `/api/game/resolution?gameId=${encodeURIComponent(gameId)}&turn=${encodeURIComponent(String(turnNumber))}`,
-    init,
-  );
+  const qs = new URLSearchParams({
+    gameId: String(gameId),
+    turn: String(turnNumber),
+  });
+  if (init?.forceLlm) qs.set("forceLlm", "1");
+  return jsonFetch(`/api/game/resolution?${qs.toString()}`, init);
 }
 
 export async function apiSubmitTurn(gameId: string, actions: PlayerAction[]): Promise<TurnOutcome> {
