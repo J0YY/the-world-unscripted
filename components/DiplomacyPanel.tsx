@@ -9,9 +9,10 @@ import { apiResolutionReport, apiSnapshot } from "@/components/api";
 export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSnapshot; gameId: string }) {
   const [selectedNationId, setSelectedNationId] = useState<string | null>(null);
   const [shiftLines, setShiftLines] = useState<string[] | null>(null);
-  const [diplomacy, setDiplomacy] = useState<GameSnapshot["diplomacy"] | null>(snapshot.diplomacy ?? null);
+  const [diplomacyOverride, setDiplomacyOverride] = useState<GameSnapshot["diplomacy"] | null>(null);
 
   const turnResolved = snapshot.turn - 1;
+  const diplomacy = snapshot.diplomacy ?? diplomacyOverride;
 
   // MUST be declared before any conditional returns (rules of hooks).
   const shiftsBlock = useMemo(() => {
@@ -38,11 +39,6 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
     );
   }, [shiftLines, turnResolved]);
 
-  // Keep local diplomacy state in sync with newest snapshot.
-  useEffect(() => {
-    setDiplomacy(snapshot.diplomacy ?? null);
-  }, [snapshot.diplomacy]);
-
   // If diplomacy isn't ready yet, poll snapshot until it appears (localized polling; avoids global request spam).
   useEffect(() => {
     if (snapshot.llmMode !== "ON") return;
@@ -61,7 +57,7 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
         const s = await apiSnapshot(gameId);
         if (stopped) return;
         if (s?.diplomacy && Array.isArray(s.diplomacy.nations) && s.diplomacy.nations.length > 0) {
-          setDiplomacy(s.diplomacy);
+          setDiplomacyOverride(s.diplomacy);
           break;
         }
       }
@@ -75,7 +71,8 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
   useEffect(() => {
     if (turnResolved < 1) return;
     const ac = new AbortController();
-    setShiftLines(null);
+    // Avoid synchronous setState inside effect body (eslint rule); schedule it.
+    queueMicrotask(() => setShiftLines(null));
     apiResolutionReport(gameId, turnResolved, { signal: ac.signal })
       .then((r) => {
         const rep = r as {

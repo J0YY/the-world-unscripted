@@ -8,7 +8,7 @@ import { clearStoredGame, getStoredGameId, setStoredGameId } from "@/components/
 import { AnimatedNoise } from "@/components/twi2/animated-noise";
 import { BitmapChevron } from "@/components/twi2/bitmap-chevron";
 import { ScrambleText, ScrambleTextOnHover } from "@/components/twi2/scramble-text";
-import { SplitFlapAudioProvider, SplitFlapMuteToggle, SplitFlapText } from "@/components/twi2/split-flap-text";
+import { SplitFlapText } from "@/components/twi2/split-flap-text";
 import type { LandingStep } from "@/components/twi2/hscroll-nav";
 
 type Busy = null | "new" | "load" | "reset";
@@ -140,27 +140,26 @@ export default function LandingPage() {
         <Panel id="hero">
           <AnimatedNoise opacity={0.03} />
           <div className="w-full max-w-6xl px-6 md:px-12 pt-8 md:pt-10">
-            <SplitFlapAudioProvider>
-              <div className="relative">
-                <div className="flex flex-col gap-0 ml-[5px]">
-                  <SplitFlapText
-                    text="THE UNSCRIPTED"
-                    speed={70}
-                    scale={0.52}
-                    className="gap-[0.18em]"
-                    // Tighten R–I and I–P in UNSCRIPTED.
-                    kerningRightPx={{ 8: -10, 9: -8 }}
-                  />
-                  <SplitFlapText
-                    text="WORLD ORDER"
-                    speed={70}
-                    scale={0.52}
-                    // Extra room before leading W, and more space between W–O.
-                    className="gap-[0.18em] -mt-16 md:-mt-20 pl-[40px]"
-                    kerningRightPx={{ 0: 26 }}
-                  />
-                </div>
+            <div className="relative">
+              <div className="flex flex-col gap-0 ml-[5px]">
+                <SplitFlapText
+                  text="THE UNSCRIPTED"
+                  speed={70}
+                  scale={0.52}
+                  className="gap-[0.18em]"
+                  // Tighten R–I and I–P in UNSCRIPTED.
+                  kerningRightPx={{ 8: -10, 9: -8 }}
+                />
+                <SplitFlapText
+                  text="WORLD ORDER"
+                  speed={70}
+                  scale={0.52}
+                  // Extra room before leading W, and more space between W–O.
+                  className="gap-[0.18em] -mt-16 md:-mt-20 pl-[40px]"
+                  kerningRightPx={{ 0: 26 }}
+                />
               </div>
+            </div>
 
               <div className="mt-2">
                 <p className="font-mono text-xs md:text-sm text-muted-foreground leading-snug max-w-2xl">{punchline}</p>
@@ -217,10 +216,6 @@ export default function LandingPage() {
               </div>
             </div>
 
-              <div className="mt-4" style={{ marginTop: "40px" }}>
-                <SplitFlapMuteToggle />
-              </div>
-            </SplitFlapAudioProvider>
           </div>
         </Panel>
 

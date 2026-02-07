@@ -18,8 +18,87 @@ function useSplitFlapAudio() {
 }
 
 export function SplitFlapAudioProvider({ children }: { children: React.ReactNode }) {
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem("twuo_audio_muted");
+      if (raw === "0") return false;
+      if (raw === "1") return true;
+    } catch {
+      // ignore
+    }
+    return true;
+  });
   const audioContextRef = useRef<AudioContext | null>(null);
+  const musicRef = useRef<HTMLAudioElement | null>(null);
+  const trackIdxRef = useRef(0);
+  const hasEverUnmutedRef = useRef(false);
+  const isMutedRef = useRef(true);
+
+  const TRACKS = useMemo(() => ["/track1.mp3", "/track2.mp3"], []);
+
+  useEffect(() => {
+    isMutedRef.current = isMuted;
+  }, [isMuted]);
+
+  const ensureMusic = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    if (!musicRef.current) {
+      const a = new Audio();
+      a.preload = "auto";
+      a.loop = false; // we rotate tracks manually
+      a.volume = 0.28;
+      a.src = TRACKS[trackIdxRef.current % TRACKS.length] ?? "/track1.mp3";
+      a.addEventListener("ended", () => {
+        trackIdxRef.current = (trackIdxRef.current + 1) % TRACKS.length;
+        a.src = TRACKS[trackIdxRef.current] ?? "/track1.mp3";
+        if (!isMutedRef.current) {
+          void a.play().catch(() => {});
+        }
+      });
+      musicRef.current = a;
+    }
+    return musicRef.current;
+  }, [TRACKS]);
+
+  const startMusic = useCallback(() => {
+    if (isMutedRef.current) return;
+    const a = ensureMusic();
+    if (!a) return;
+    // Autoplay policies: only attempt after user unmutes at least once.
+    if (!hasEverUnmutedRef.current) return;
+    void a.play().catch(() => {});
+  }, [ensureMusic]);
+
+  const stopMusic = useCallback(() => {
+    const a = musicRef.current;
+    if (!a) return;
+    a.pause();
+  }, []);
+
+  useEffect(() => {
+    // If state flips via storage init or toggle, apply immediately.
+    if (isMuted) stopMusic();
+    else startMusic();
+  }, [isMuted, startMusic, stopMusic]);
+
+  // If user previously unmuted (persisted), try starting on first interaction.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (isMuted) return;
+    if (hasEverUnmutedRef.current) return;
+    const onFirst = () => {
+      hasEverUnmutedRef.current = true;
+      startMusic();
+      window.removeEventListener("pointerdown", onFirst);
+      window.removeEventListener("keydown", onFirst);
+    };
+    window.addEventListener("pointerdown", onFirst);
+    window.addEventListener("keydown", onFirst);
+    return () => {
+      window.removeEventListener("pointerdown", onFirst);
+      window.removeEventListener("keydown", onFirst);
+    };
+  }, [isMuted, startMusic]);
 
   const getAudioContext = useCallback(() => {
     if (typeof window === "undefined") return null;
@@ -78,16 +157,32 @@ export function SplitFlapAudioProvider({ children }: { children: React.ReactNode
   }, [isMuted, getAudioContext, triggerHaptic]);
 
   const toggleMute = useCallback(() => {
-    setIsMuted((prev) => !prev);
-    if (isMuted) {
+    setIsMuted((prev) => {
+      const next = !prev;
       try {
-        const ctx = getAudioContext();
-        if (ctx && ctx.state === "suspended") ctx.resume();
+        window.localStorage.setItem("twuo_audio_muted", next ? "1" : "0");
       } catch {
         // ignore
       }
-    }
-  }, [isMuted, getAudioContext]);
+      if (!next) {
+        hasEverUnmutedRef.current = true;
+        try {
+          const ctx = getAudioContext();
+          if (ctx && ctx.state === "suspended") ctx.resume();
+        } catch {
+          // ignore
+        }
+        // Start music on unmute (best-effort, respects autoplay restrictions).
+        queueMicrotask(() => {
+          const a = ensureMusic();
+          void a?.play().catch(() => {});
+        });
+      } else {
+        queueMicrotask(() => stopMusic());
+      }
+      return next;
+    });
+  }, [getAudioContext, ensureMusic, stopMusic]);
 
   const value = useMemo(() => ({ isMuted, toggleMute, playClick }), [isMuted, toggleMute, playClick]);
   return <SplitFlapAudioContext.Provider value={value}>{children}</SplitFlapAudioContext.Provider>;
