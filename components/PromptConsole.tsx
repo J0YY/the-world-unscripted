@@ -1,23 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Send, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { Send, ChevronLeft, ChevronRight, Dice5 } from "lucide-react";
 import { motion } from "framer-motion";
+import type { GameSnapshot } from "@/engine";
+import { apiTimeline } from "@/components/api";
 
-type SuggestPayload = {
-  situation: { headline: string; keyDevelopments: string[] };
-  suggestions: string[];
-  redFlags: string[];
-  questions: string[];
+type TimelinePayload = {
+  items: Array<{ turnNumber: number; directive: string | null; headline: string; bullets: string[]; incoming: string[] }>;
 };
 
 export function PromptConsole({
   gameId,
   llmMode,
+  snapshot,
   disabled,
   onSubmitDirective,
   turnLabel,
-  autoSuggest = false,
   canGoPrev,
   canGoNext,
   onPrev,
@@ -25,10 +24,10 @@ export function PromptConsole({
 }: {
   gameId: string;
   llmMode?: "ON" | "OFF";
+  snapshot: GameSnapshot;
   disabled?: boolean;
   onSubmitDirective: (directive: string) => Promise<void>;
   turnLabel: string;
-  autoSuggest?: boolean;
   canGoPrev: boolean;
   canGoNext: boolean;
   onPrev: () => void;
@@ -36,44 +35,34 @@ export function PromptConsole({
 }) {
   const [directive, setDirective] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [suggest, setSuggest] = useState<SuggestPayload | null>(null);
-  const [suggestErr, setSuggestErr] = useState<string | null>(null);
-  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [timeline, setTimeline] = useState<TimelinePayload | null>(null);
+  const [timelineErr, setTimelineErr] = useState<string | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   const placeholder = useMemo(
     () =>
-      "Type your directive. Example: Quietly reassure the EU we’ll allow inspections, while preparing a limited mobilization and targeted subsidies to prevent weekend unrest.",
+      "Type your directive. Be specific about what you want to achieve, who you want to influence, and what you want to happen next.",
     [],
   );
 
-  async function refreshSuggestions() {
-    if (llmMode !== "ON") return;
-    setSuggestLoading(true);
-    setSuggestErr(null);
+  async function refreshTimeline() {
+    setTimelineLoading(true);
+    setTimelineErr(null);
     try {
-      const res = await fetch("/api/game/suggest", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ gameId }),
-      });
-      const data = (await res.json()) as SuggestPayload | { error?: string };
-      if (!res.ok) throw new Error(("error" in data && data.error) || `Suggest failed (${res.status})`);
-      setSuggest(data as SuggestPayload);
+      const data = (await apiTimeline(gameId, { limit: 8 })) as TimelinePayload;
+      setTimeline(data);
     } catch (e) {
-      setSuggestErr((e as Error).message);
-      setSuggest(null);
+      setTimelineErr((e as Error).message);
+      setTimeline(null);
     } finally {
-      setSuggestLoading(false);
+      setTimelineLoading(false);
     }
   }
 
   useEffect(() => {
-    // Don't auto-burn credits. Only auto-fetch when explicitly enabled.
-    if (!autoSuggest) return;
-    if (disabled) return;
-    void refreshSuggestions();
+    void refreshTimeline();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSuggest, disabled, gameId, turnLabel, llmMode]);
+  }, [gameId, turnLabel]);
 
   async function submit() {
     if (!directive.trim() || submitting || disabled) return;
@@ -86,8 +75,32 @@ export function PromptConsole({
     }
   }
 
+  const timelineTop = timeline?.items?.[0] ?? null;
+
+  const autoFillOptions = useMemo(() => {
+    const c = snapshot.countryProfile.name;
+    const n1 = snapshot.countryProfile.neighbors?.[0] ?? "a neighbor";
+    const n2 = snapshot.countryProfile.neighbors?.[1] ?? "another neighbor";
+    const h = String(timelineTop?.headline || snapshot.playerView.briefing.headlines?.[0] || "")
+      .replace(/\s+/g, " ")
+      .slice(0, 80);
+    return [
+      `Announce fuel + staples relief; open IMF backchannel; task intel to trace: "${h}".`,
+      `Offer EU inspections-for-sanctions pause; tighten port + border controls; move reserves vs ${n1}.`,
+      `Fire the finance minister; freeze bread + fuel prices for 14 days; arrest one flagship profiteer.`,
+      `Secure emergency shipments; deploy crowd-control to the capital; open a hotline with ${n2}.`,
+      `Propose a 7-day stand-down corridor; demand trade-route guarantees; prep retaliation plan.`,
+    ];
+  }, [snapshot.countryProfile.name, snapshot.countryProfile.neighbors, snapshot.playerView.briefing.headlines, timelineTop?.headline]);
+
+  function autofill() {
+    const pick = autoFillOptions[Math.floor(Math.random() * autoFillOptions.length)] ?? "";
+    if (!pick) return;
+    setDirective(pick);
+  }
+
   return (
-    <div className="prompt-console fixed inset-x-0 bottom-0 z-[60] h-[26vh] border-t border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/90 backdrop-blur overflow-hidden">
+    <div className="prompt-console fixed inset-x-0 bottom-0 z-[60] h-[24vh] border-t border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/90 backdrop-blur overflow-hidden">
       {submitting ? (
         <motion.div
           className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center"
@@ -152,98 +165,88 @@ export function PromptConsole({
             </button>
           </div>
 
-          {llmMode === "ON" ? (
-            <button
-              type="button"
-              onClick={() => void refreshSuggestions()}
-              disabled={suggestLoading}
-              className="inline-flex items-center gap-2 rounded border border-emerald-500/30 bg-emerald-950/10 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider text-emerald-600 disabled:opacity-50"
-              aria-label="Refresh AI suggestions"
-            >
-              <Sparkles className="h-3.5 w-3.5" />
-              {suggestLoading ? "Generating…" : "Suggestions"}
-            </button>
-          ) : (
-            <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-500)]">AI OFF</div>
-          )}
+          <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-500)]">
+            {llmMode === "ON" ? "AI ON" : "AI OFF"}
+          </div>
         </div>
 
-        <div className="mt-3 grid gap-3 lg:grid-cols-[1.2fr_1fr] flex-1 min-h-0">
-          <div className="min-h-0 overflow-y-auto rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] p-3">
-            {llmMode !== "ON" ? (
-              <div className="text-xs font-mono text-[var(--ds-gray-700)]">
-                AI is offline. You can still type directives, but they won’t be translated into operations.
+        <div className="mt-3 flex flex-col gap-3 flex-1 min-h-0">
+          <details className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] px-3 py-2">
+            <summary className="cursor-pointer select-none">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Timeline</div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void refreshTimeline();
+                  }}
+                  disabled={timelineLoading}
+                  className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-800)] disabled:opacity-50"
+                >
+                  {timelineLoading ? "Refreshing…" : "Refresh"}
+                </button>
               </div>
-            ) : suggestErr ? (
-              <div className="text-xs font-mono text-[var(--ds-red-700)]">Suggestions error: {suggestErr}</div>
-            ) : !suggest ? (
-              <div className="text-xs font-mono text-[var(--ds-gray-700)]">
-                Click <span className="font-semibold">Suggestions</span> to generate AI directives.
+            </summary>
+            {timelineErr ? <div className="mt-2 text-xs font-mono text-[var(--ds-red-700)]">Timeline error: {timelineErr}</div> : null}
+            {!timeline ? (
+              <div className="mt-2 text-xs font-mono text-[var(--ds-gray-700)]">
+                {timelineLoading ? "Loading timeline…" : "No timeline available yet."}
               </div>
             ) : (
-              <div className="space-y-3">
-                <div>
-                  <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Situation</div>
-                  <div className="mt-1 text-xs font-mono text-[var(--ds-gray-1000)]">{suggest.situation.headline}</div>
-                  <ul className="mt-2 space-y-1">
-                    {suggest.situation.keyDevelopments.map((d) => (
-                      <li key={d} className="text-[11px] font-mono text-[var(--ds-gray-800)]">
-                        - {d}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div>
-                  <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Suggested directives</div>
-                  <ul className="mt-2 space-y-1">
-                    {suggest.suggestions.map((s) => (
-                      <li key={s} className="text-[11px] font-mono text-[var(--ds-gray-900)]">
-                        - {s}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                {suggest.redFlags.length ? (
-                  <div>
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Red flags</div>
-                    <ul className="mt-2 space-y-1">
-                      {suggest.redFlags.map((r) => (
-                        <li key={r} className="text-[11px] font-mono text-[var(--ds-red-700)]">
-                          - {r}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
+              <ul className="mt-2 space-y-2 max-h-[10vh] overflow-y-auto pr-1">
+                {timeline.items.map((it) => (
+                  <li
+                    key={`${it.turnNumber}-${it.headline}`}
+                    className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] p-2"
+                  >
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Turn {it.turnNumber}</div>
+                    <div className="mt-1 text-[11px] font-mono text-[var(--ds-gray-1000)]">{it.headline}</div>
+                    {it.directive ? (
+                      <div className="mt-1 text-[11px] font-mono text-[var(--ds-gray-800)]">
+                        <span className="opacity-60">Directive:</span> {it.directive}
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
             )}
-          </div>
+          </details>
 
-          <div className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] p-3 flex flex-col min-h-0">
+          <div className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] p-3 flex flex-col min-h-0 flex-1">
             <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Directive</div>
             <textarea
               value={directive}
               onChange={(e) => setDirective(e.target.value)}
               placeholder={placeholder}
               rows={4}
-              className="mt-2 w-full flex-1 min-h-0 resize-none rounded bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-1000)] outline-none ring-1 ring-[var(--ds-gray-alpha-200)] placeholder:text-[var(--ds-gray-500)]"
+              className="mt-2 w-full flex-1 min-h-0 resize-none rounded bg-[var(--ds-background-100)] px-3 py-3 text-sm md:text-base leading-relaxed font-mono text-[var(--ds-gray-1000)] outline-none ring-1 ring-[var(--ds-gray-alpha-200)] placeholder:text-[var(--ds-gray-500)]"
               disabled={disabled || submitting}
             />
             <div className="mt-2 flex items-center justify-between gap-2">
               <div className="text-[10px] font-mono text-[var(--ds-gray-600)]">
                 {disabled ? "History view is read-only." : "Enter to submit."}
               </div>
-              <button
-                type="button"
-                onClick={() => void submit()}
-                disabled={disabled || submitting || !directive.trim()}
-                className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-1000)] disabled:opacity-40"
-              >
-                <Send className="h-3.5 w-3.5" />
-                {submitting ? "Submitting…" : "End turn"}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => autofill()}
+                  disabled={disabled || submitting}
+                  className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-900)] disabled:opacity-40"
+                >
+                  <Dice5 className="h-3.5 w-3.5" />
+                  Autofill
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submit()}
+                  disabled={disabled || submitting || !directive.trim()}
+                  className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-1000)] disabled:opacity-40"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {submitting ? "Submitting…" : "End turn"}
+                </button>
+              </div>
             </div>
           </div>
         </div>

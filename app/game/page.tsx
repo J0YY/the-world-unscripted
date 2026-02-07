@@ -18,7 +18,6 @@ export default function GameControlRoomPage() {
   const [isFadingIn, setIsFadingIn] = useState(true);
   const [afterActionOpen, setAfterActionOpen] = useState(false);
   const [afterActionOutcome, setAfterActionOutcome] = useState<TurnOutcome | null>(null);
-  const [afterActionBefore, setAfterActionBefore] = useState<GameSnapshot | null>(null);
   const [afterActionDirective, setAfterActionDirective] = useState<string>("");
 
   useEffect(() => {
@@ -65,7 +64,6 @@ export default function GameControlRoomPage() {
   async function onSubmitDirective(directive: string) {
     const gameId = getStoredGameId();
     if (!gameId) return;
-    const before = snap;
     const outcome = await apiSubmitTurnWithDirective(gameId, [], directive.trim());
     setLastOutcome(outcome);
     if (outcome.failure) {
@@ -74,7 +72,6 @@ export default function GameControlRoomPage() {
     } else {
       // Advance UI to next snapshot immediately (next turn), and show an after-action modal overlay.
       setAfterActionOutcome(outcome);
-      setAfterActionBefore(before ?? null);
       setAfterActionDirective(directive.trim());
       setAfterActionOpen(true);
 
@@ -102,17 +99,16 @@ export default function GameControlRoomPage() {
           snapshot={snap}
           bottomSlot={
             // Reserve space so the sticky prompt console doesn't cover content.
-            <div className="h-[28vh]" />
+            <div className="h-[26vh]" />
           }
         />
       </Shell>
 
-      {gameId ? (
+      {gameId && afterActionOpen && afterActionOutcome ? (
         <AfterActionModal
-          open={afterActionOpen}
+          open={true}
           gameId={gameId}
           outcome={afterActionOutcome}
-          beforeSnapshot={afterActionBefore}
           directiveText={afterActionDirective}
           llmMode={snap.llmMode}
           onClose={() => setAfterActionOpen(false)}
@@ -123,10 +119,10 @@ export default function GameControlRoomPage() {
         <PromptConsole
           gameId={gameId}
           llmMode={snap.llmMode}
+          snapshot={snap}
           disabled={turnIdx >= 0 && turnIdx < turns.length - 1}
           onSubmitDirective={onSubmitDirective}
           turnLabel={`Turn ${snap.turn}`}
-          autoSuggest={false}
           canGoPrev={turnIdx > 0}
           canGoNext={turnIdx >= 0 && turnIdx < turns.length - 1}
           onPrev={() => viewTurnAt(Math.max(0, turnIdx - 1))}

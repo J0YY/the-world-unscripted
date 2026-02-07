@@ -34,6 +34,17 @@ export async function apiTurnHistory(gameId: string): Promise<{ turns: Array<{ t
   );
 }
 
+export async function apiTimeline(
+  gameId: string,
+  opts?: { limit?: number },
+): Promise<{
+  items: Array<{ turnNumber: number; directive: string | null; headline: string; bullets: string[]; incoming: string[] }>;
+}> {
+  const qs = new URLSearchParams({ gameId: String(gameId) });
+  if (typeof opts?.limit === "number" && Number.isFinite(opts.limit)) qs.set("limit", String(opts.limit));
+  return jsonFetch(`/api/game/timeline?${qs.toString()}`);
+}
+
 export async function apiResolutionReport(
   gameId: string,
   turnNumber: number,

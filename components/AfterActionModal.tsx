@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
-import type { GameSnapshot, TurnOutcome } from "@/engine";
+import type { TurnOutcome } from "@/engine";
 import { apiReset } from "@/components/api";
 import { apiResolutionReport } from "@/components/api";
 import { clearStoredGame } from "@/components/storage";
@@ -36,7 +36,6 @@ export default function AfterActionModal({
   open,
   gameId,
   outcome,
-  beforeSnapshot,
   directiveText,
   llmMode,
   onClose,
@@ -44,7 +43,6 @@ export default function AfterActionModal({
   open: boolean;
   gameId: string;
   outcome: TurnOutcome | null;
-  beforeSnapshot: GameSnapshot | null;
   directiveText: string;
   llmMode?: "ON" | "OFF";
   onClose: () => void;
@@ -52,9 +50,6 @@ export default function AfterActionModal({
   const router = useRouter();
   const [report, setReport] = useState<ResolutionReport | null>(null);
   const [baseErr, setBaseErr] = useState<string | null>(null);
-  const [enhancing, setEnhancing] = useState(false);
-  const [enhanceErr, setEnhanceErr] = useState<string | null>(null);
-  const autoEnhancedKeyRef = useRef<string | null>(null);
   const [ackCritical, setAckCritical] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetErr, setResetErr] = useState<string | null>(null);
@@ -69,12 +64,8 @@ export default function AfterActionModal({
     if (shownDirective) {
       lines.push(`Directive executed: ${shownDirective}`);
     }
-    if (report?.translatedActions?.length) {
-      const ops = report.translatedActions.slice(0, 2).map((a) => a.summary);
-      lines.push(`Operations: ${ops.join(" + ")}`);
-    }
     return lines;
-  }, [shownDirective, report?.translatedActions]);
+  }, [shownDirective]);
 
   const narrative = useMemo(() => {
     if (!outcome) return [];
@@ -83,6 +74,8 @@ export default function AfterActionModal({
       // Only trust the LLM narrative if it has substance; otherwise fall back to deterministic.
       if (llmLines.length >= 2) return [...openingLines, ...llmLines].slice(0, 18);
     }
+    // When AI is ON, do not show the deterministic "field brief" while waiting.
+    if (llmMode === "ON") return [];
     // Deterministic fallback: still "dynamic" per-turn because it's synthesized from
     // the executed actions + true deltas + consequences, not a static template block.
     const lines: string[] = [...openingLines];
@@ -124,17 +117,11 @@ export default function AfterActionModal({
     }
 
     // If AI is expected but unavailable, surface that clearly.
-    if (llmMode !== "ON") {
-      lines.push("(AI offline: showing deterministic brief.)");
-    } else if (enhancing) {
-      lines.push("(Generating AI brief…)");
-    } else if (enhanceErr) {
-      lines.push(`(AI brief unavailable: ${enhanceErr})`);
-    }
+    if (llmMode !== "ON") lines.push("(AI offline: showing deterministic brief.)");
 
     const out = lines.map((s) => (typeof s === "string" ? s.trim() : "")).filter(Boolean).slice(0, 18);
     return out.length ? out : ["(Generating report…)"];
-  }, [outcome, report?.llm, report?.deltas, report?.consequences, report?.signalsUnknown, openingLines, llmMode, enhancing, enhanceErr]);
+  }, [outcome, report, openingLines, llmMode]);
 
   const criticalBreaches = useMemo(() => {
     const deltas = Array.isArray(report?.deltas) ? report!.deltas : [];
@@ -152,7 +139,7 @@ export default function AfterActionModal({
     // Only warn on the extreme failure-style metrics the user cares about most.
     const allow = new Set(["Economic stability", "Unrest", "Inflation pressure", "Debt stress", "Sovereignty integrity", "Legitimacy"]);
     return breaches.filter((b) => allow.has(b.label));
-  }, [report?.deltas]);
+  }, [report]);
 
   const statChanges = useMemo(() => {
     // Prefer server-side "ground truth" deltas (derived from WorldState before/after).
@@ -163,27 +150,16 @@ export default function AfterActionModal({
       .filter((r) => Number.isFinite(r.delta) && r.delta !== 0)
       .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta))
       .slice(0, 8);
-  }, [report?.deltas]);
-
-  useEffect(() => {
-    if (!open) return;
-    setReport(null);
-    setBaseErr(null);
-    setEnhancing(false);
-    setEnhanceErr(null);
-    autoEnhancedKeyRef.current = null;
-    setAckCritical(false);
-    setResetting(false);
-    setResetErr(null);
-  }, [open]);
+  }, [report]);
 
   useEffect(() => {
     if (!open) return;
     if (!outcome) return;
-    // Fetch the base report quickly (translated ops, etc). Fast-mode server returns immediately.
+    // When AI is ON, block on the full AI brief (no deterministic filler shown).
     const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), 8000);
-    apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal })
+    const wantAi = llmMode === "ON";
+    const t = setTimeout(() => ac.abort(), wantAi ? 90_000 : 10_000);
+    apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal, forceLlm: wantAi })
       .then((r) => setReport(r as ResolutionReport))
       .catch((e) => {
         if ((e as Error).name === "AbortError") return;
@@ -194,45 +170,7 @@ export default function AfterActionModal({
       clearTimeout(t);
       ac.abort();
     };
-  }, [open, gameId, outcome]);
-
-  async function enhanceWithAi(opts?: { timeoutMs?: number }) {
-    if (!outcome) return;
-    if (llmMode !== "ON") return;
-    setEnhancing(true);
-    setEnhanceErr(null);
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), opts?.timeoutMs ?? 45_000);
-    try {
-      const r = (await apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal, forceLlm: true })) as ResolutionReport;
-      setReport(r);
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        setEnhanceErr((e as Error).message);
-      } else {
-        setEnhanceErr("AI narrative is taking too long (timed out). Try again.");
-      }
-    } finally {
-      clearTimeout(t);
-      setEnhancing(false);
-    }
-  }
-
-  useEffect(() => {
-    // If AI is ON, auto-enhance the resolution by default (once per game+turn),
-    // while still showing the fast deterministic report immediately.
-    if (!open) return;
-    if (llmMode !== "ON") return;
-    if (!outcome) return;
-    if (!report) return;
-    // Only skip if we already have a usable LLM narrative.
-    if (report.llm && typeof report.llm === "object" && Array.isArray((report.llm as { narrative?: unknown }).narrative)) return;
-    if (enhancing) return;
-    const key = `${gameId}:${outcome.turnResolved}`;
-    if (autoEnhancedKeyRef.current === key) return;
-    autoEnhancedKeyRef.current = key;
-    void enhanceWithAi({ timeoutMs: 45_000 });
-  }, [open, llmMode, outcome, report, enhancing, gameId]);
+  }, [open, gameId, outcome, llmMode]);
 
   const hasCritical = criticalBreaches.length > 0;
   const autoGameOver = criticalBreaches.length >= 2;
@@ -258,7 +196,8 @@ export default function AfterActionModal({
     if (!report) return;
     if (!autoGameOver) return;
     if (resetting) return;
-    void resetToLanding();
+    const t = setTimeout(() => void resetToLanding(), 0);
+    return () => clearTimeout(t);
   }, [open, outcome, report, autoGameOver, resetting, resetToLanding]);
 
   if (!open || !outcome) return null;
@@ -267,6 +206,12 @@ export default function AfterActionModal({
     report?.llm && typeof report.llm === "object" && "headline" in report.llm && typeof report.llm.headline === "string"
       ? report.llm.headline
       : `Turn ${outcome.turnResolved} — After Action`;
+
+  const aiReady =
+    llmMode !== "ON" ||
+    (!!report?.llm && Array.isArray(report.llm.narrative) && report.llm.narrative.filter((x) => typeof x === "string").length >= 2);
+
+  const loadingAi = llmMode === "ON" && !aiReady && !baseErr;
 
   return (
     <motion.div
@@ -283,7 +228,43 @@ export default function AfterActionModal({
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.25 }}
       >
-        {autoGameOver ? (
+        {llmMode === "ON" && !aiReady ? (
+          <div className="rounded-xl border border-white/10 bg-black/30 p-6">
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/50">After Action</div>
+            <div className="mt-3 text-2xl font-semibold text-white">Generating brief</div>
+            <div className="mt-2 text-sm text-white/70">
+              Compiling the end-of-turn intelligence memo. This blocks until the narrative is ready.
+            </div>
+            <ul className="mt-5 space-y-2 text-sm text-white/80 font-mono">
+              {[
+                "Reconciling events and consequences…",
+                "Synthesizing chain-of-events…",
+                "Projecting second-order impacts…",
+                "Formatting timeline blocks…",
+              ].map((t) => (
+                <li key={t}>- {t}</li>
+              ))}
+            </ul>
+            <div className="mt-6 h-1 w-full bg-white/10 rounded overflow-hidden">
+              <div className="h-full w-1/3 bg-white/60 animate-pulse" />
+            </div>
+            {loadingAi ? <div className="mt-3 text-xs font-mono text-white/50">Waiting for AI…</div> : null}
+            {baseErr ? <div className="mt-4 text-xs font-mono text-red-300">Report: {baseErr}</div> : null}
+            {!loadingAi && baseErr ? (
+              <div className="mt-4 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => onClose()}
+                  className="rounded border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-white/80 hover:bg-white/10"
+                >
+                  Continue anyway
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <>
+            {autoGameOver ? (
           <div className="mb-4 rounded-lg border border-red-500/30 bg-red-950/20 p-4">
             <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-red-200/70">Government terminated</div>
             <div className="mt-2 text-sm text-red-100">
@@ -297,7 +278,7 @@ export default function AfterActionModal({
               {resetErr ? ` ERR: ${resetErr}` : ""}
             </div>
           </div>
-        ) : null}
+            ) : null}
 
         {hasCritical && !autoGameOver && !ackCritical ? (
           <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-950/20 p-4">
@@ -320,23 +301,13 @@ export default function AfterActionModal({
           </div>
         ) : null}
 
-        <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start justify-between gap-4">
           <div>
             <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/50">After Action</div>
             <div className="mt-2 text-2xl font-semibold text-white">{headline}</div>
             <div className="mt-1 text-xs text-white/60 font-mono">You are now in Turn {outcome.nextSnapshot.turn}.</div>
           </div>
           <div className="flex items-center gap-2">
-            {llmMode === "ON" ? (
-              <button
-                type="button"
-                onClick={() => void enhanceWithAi()}
-                disabled={enhancing}
-                className="rounded border border-emerald-500/30 bg-emerald-950/20 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-emerald-300 disabled:opacity-50"
-              >
-                {enhancing ? "Enhancing…" : "Enhance w/ AI"}
-              </button>
-            ) : null}
             <button
               type="button"
               onClick={() => {
@@ -344,6 +315,7 @@ export default function AfterActionModal({
                 if (hasCritical && !ackCritical) return;
                 onClose();
               }}
+              disabled={!aiReady}
               className="rounded border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-white/80 hover:bg-white/10"
             >
               Continue
@@ -351,7 +323,6 @@ export default function AfterActionModal({
           </div>
         </div>
 
-        {enhanceErr ? <div className="mt-3 text-xs font-mono text-red-300">AI: {enhanceErr}</div> : null}
         {baseErr ? <div className="mt-2 text-xs font-mono text-red-300">Report: {baseErr}</div> : null}
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -361,14 +332,19 @@ export default function AfterActionModal({
               {shownDirective ? shownDirective : "(no directive submitted)"}
             </div>
             {report?.translatedActions?.length ? (
-              <div className="mt-3">
-                <div className="text-xs font-mono uppercase tracking-wider text-white/50">Operations executed</div>
-                <ul className="mt-2 space-y-1 text-[12px] text-white/80">
-                  {report.translatedActions.slice(0, 4).map((a) => (
-                    <li key={a.summary}>- {a.summary}</li>
-                  ))}
-                </ul>
-              </div>
+              <details className="mt-3">
+                <summary className="cursor-pointer select-none text-xs font-mono uppercase tracking-wider text-white/50 hover:text-white/70">
+                  Technical log
+                </summary>
+                <div className="mt-2 rounded border border-white/10 bg-white/5 p-3">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-white/50">Internal actions</div>
+                  <ul className="mt-2 space-y-1 text-[12px] text-white/80">
+                    {report.translatedActions.slice(0, 4).map((a) => (
+                      <li key={a.summary}>- {a.summary}</li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
             ) : null}
             {statChanges.length ? (
               <div className="mt-3">
@@ -407,6 +383,8 @@ export default function AfterActionModal({
             </ul>
           </div>
         </div>
+          </>
+        )}
       </motion.div>
     </motion.div>
   );

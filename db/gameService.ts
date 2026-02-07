@@ -131,6 +131,10 @@ function fallbackActionsFromDirective(args: {
   const isPublic = /\bpublic\b|\bannounce\b|\bon tv\b|\bpress\b/.test(d);
   const intensity = /\bfull\b|\bmaximum\b|\bmassive\b|\bcrush\b|\binvade\b/.test(d) ? 3 : /\blimited\b|\bquiet\b|\bcovert\b/.test(d) ? 1 : 2;
 
+  const wantAlliance =
+    /\balliance\b|\bbloc\b|\bpact\b|\btreaty\b|\bmutual defense\b|\bcollective security\b|\bsecurity guarantee\b/.test(d) &&
+    !/\banti-?alliance\b|\bbreak alliance\b/.test(d);
+
   const wantIndustry = /\binfrastructure\b|\bindustry\b|\bindustrial\b|\bfactory\b|\binvest\b|\bbuild\b/.test(d);
   const wantSubsidy = /\bsubsid(y|ies)\b|\bprice cap\b|\bfuel\b|\bfood\b/.test(d);
   const wantAusterity = /\bausterity\b|\bcut spending\b|\btighten\b/.test(d);
@@ -144,6 +148,31 @@ function fallbackActionsFromDirective(args: {
   if (wantIndustry && actions.length < args.remainingSlots) {
     actions.push({ kind: "ECONOMY", subkind: "INDUSTRIAL_PUSH", intensity, isPublic });
     rationale.push("Translate infrastructure/industry intent into an industrial push.");
+  }
+  if (wantAlliance && actions.length < args.remainingSlots) {
+    const topic = /\btrade\b|\beconomic\b|\bmarket\b/.test(d) ? "trade" : "security";
+    actions.push({
+      kind: "DIPLOMACY",
+      subkind: "TREATY_PROPOSAL",
+      targetActor: targetActorId,
+      topic,
+      tone: "conciliatory",
+      intensity,
+      isPublic: isPublic || /\bpublicly\b|\bannounce\b/.test(d),
+    });
+    rationale.push("Translate alliance/bloc intent into a treaty proposal to the closest modeled partner/pressure actor.");
+    if (actions.length < args.remainingSlots) {
+      actions.push({
+        kind: "DIPLOMACY",
+        subkind: "MESSAGE",
+        targetActor: targetActorId === "REGIONAL_1" ? "REGIONAL_2" : "REGIONAL_1",
+        topic,
+        tone: "firm",
+        intensity: Math.max(1, intensity - 1) as 1 | 2 | 3,
+        isPublic: false,
+      });
+      rationale.push("Add a second diplomatic channel to simulate multilateral coordination within the action budget.");
+    }
   }
   if (wantSubsidy && actions.length < args.remainingSlots) {
     actions.push({ kind: "ECONOMY", subkind: "SUBSIDIES", intensity: Math.min(3, intensity + 0) as 1 | 2 | 3, isPublic: true });
@@ -696,6 +725,88 @@ export async function getTurnHistory(gameId: string): Promise<{
   return { turns };
 }
 
+export async function getGameTimeline(
+  gameId: string,
+  opts?: { limit?: number },
+): Promise<{
+  items: Array<{
+    turnNumber: number;
+    directive: string | null;
+    headline: string;
+    bullets: string[];
+    incoming: string[];
+  }>;
+}> {
+  const limit = Math.max(3, Math.min(12, opts?.limit ?? 8));
+  const rows = await prisma.turnLog.findMany({
+    where: { gameId },
+    orderBy: { turnNumber: "desc" },
+    take: limit,
+  });
+
+  const safeStr = (v: unknown, max = 220) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+  const isTimeBlock = (s: string) =>
+    s.startsWith("NEXT 72 HOURS:") || s.startsWith("2–4 WEEKS:") || s.startsWith("2–3 MONTHS:") || s.startsWith("4–6 MONTHS:");
+
+  const items = rows
+    .map((r) => {
+      const snap = extractAfterSnapshot(r.playerSnapshot);
+      const artifacts = (r.llmArtifacts as unknown as Record<string, unknown> | null) ?? null;
+      const res = artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] : null;
+      const llmHeadline =
+        res && typeof res === "object" && "headline" in (res as Record<string, unknown>)
+          ? safeStr((res as Record<string, unknown>)["headline"], 160)
+          : "";
+      const llmNarr =
+        res && typeof res === "object" && Array.isArray((res as Record<string, unknown>)["narrative"])
+          ? ((res as Record<string, unknown>)["narrative"] as unknown[])
+              .filter((x) => typeof x === "string")
+              .map((s) => safeStr(s, 220))
+              .filter(Boolean)
+          : [];
+
+      const publicHeadline = safeStr(r.publicResolution.split("\n")[0] ?? "", 160) || safeStr(r.publicResolution, 160);
+      const headline = llmHeadline || publicHeadline || `Turn ${r.turnNumber}`;
+
+      let bullets: string[] = [];
+      if (llmNarr.length) {
+        bullets = llmNarr.filter((s) => !isTimeBlock(s)).slice(0, 4);
+      }
+      if (!bullets.length && Array.isArray(r.publicConsequences)) {
+        bullets = (r.publicConsequences as unknown[])
+          .filter((x) => typeof x === "string")
+          .map((s) => safeStr(s, 180))
+          .filter(Boolean)
+          .slice(0, 4);
+      }
+      if (!bullets.length) {
+        bullets = safeStr(r.publicResolution, 800)
+          .split("\n")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 4);
+      }
+
+      const incoming = (snap?.playerView?.incomingEvents ?? [])
+        .slice(0, 5)
+        .map((e) => (e && typeof e === "object" && "visibleDescription" in e ? String((e as { visibleDescription?: unknown }).visibleDescription) : ""))
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const directive = typeof r.playerDirective === "string" ? r.playerDirective : null;
+
+      return {
+        turnNumber: r.turnNumber,
+        directive: directive?.trim() ? directive.trim() : null,
+        headline,
+        bullets,
+        incoming,
+      };
+    })
+    .filter(Boolean);
+
+  return { items };
+}
+
 function summarizeAction(a: PlayerAction): string {
   const kind = a.kind;
   switch (kind) {
@@ -845,7 +956,7 @@ export async function getResolutionReport(
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
   // Only reuse cached LLM artifacts if they actually contain a usable narrative.
   // Old/partial cached shapes can have a headline but no narrative, which makes the UI look blank.
-  if (existing && typeof existing === "object") {
+  if (!opts?.forceLlm && existing && typeof existing === "object") {
     const n = (existing as Record<string, unknown>)["narrative"];
     const lines = Array.isArray(n) ? n.filter((x) => typeof x === "string").map((s) => String(s).trim()).filter(Boolean) : [];
     const hasTimeline =
@@ -853,8 +964,14 @@ export async function getResolutionReport(
       lines.some((s) => s.startsWith("2–4 WEEKS:")) &&
       lines.some((s) => s.startsWith("2–3 MONTHS:")) &&
       lines.some((s) => s.startsWith("4–6 MONTHS:"));
+    const leaksInternalOps = lines.some((s) => /\b(LIMITED_STRIKE|FULL_INVASION|MOBILIZE|PROXY_SUPPORT|ARMS_PURCHASE|intensity)\b/i.test(s));
+    const leaksScoreDeltas =
+      lines.some((s) => /\b[+-]\d{1,3}\b/.test(s)) ||
+      lines.some((s) => /\b\d{1,3}\s*(\/\s*100|points?|pts)\b/i.test(s)) ||
+      lines.some((s) => /\b\d{1,3}\s*\/\s*100\b/.test(s));
     // Require the richer timeline format; otherwise regenerate.
-    if (lines.length >= 10 && hasTimeline) {
+    // Also require that the narrative does not leak internal action labels or numeric deltas.
+    if (lines.length >= 10 && hasTimeline && !leaksInternalOps && !leaksScoreDeltas) {
       return { ...base, llm: existing };
     }
   }

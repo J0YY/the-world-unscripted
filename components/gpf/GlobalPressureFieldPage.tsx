@@ -97,9 +97,7 @@ export default function GlobalPressureFieldPage({
                     </div>
                   </div>
                 </div>
-                <div className="mt-2 text-[10px] text-[var(--ds-gray-600)]">
-                  Persisted: pulled from your saved snapshot (no regen on reload).
-                </div>
+                
               </div>
             </div>
           </div>
