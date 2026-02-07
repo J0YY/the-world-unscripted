@@ -9,6 +9,241 @@ function confToUi(c: "low" | "med" | "high"): UiSignalConfidence {
   return c === "high" ? "HIGH" : c === "med" ? "MED" : "LOW";
 }
 
+// Helper to build country code to names mapping for briefing hover matching
+function buildCountryCodeToNamesMap(): Map<string, Set<string>> {
+  const countryNameToCode: Record<string, string> = {
+    // Europe
+    "germany": "DE",
+    "france": "FR",
+    "united kingdom": "GB",
+    "uk": "GB",
+    "britain": "GB",
+    "great britain": "GB",
+    "england": "GB",
+    "russia": "RU",
+    "russian federation": "RU",
+    "ukraine": "UA",
+    "poland": "PL",
+    "italy": "IT",
+    "spain": "ES",
+    "sweden": "SE",
+    "norway": "NO",
+    "belgium": "BE",
+    "netherlands": "NL",
+    "holland": "NL",
+    "austria": "AT",
+    "switzerland": "CH",
+    "greece": "GR",
+    "portugal": "PT",
+    "czech republic": "CZ",
+    "czechia": "CZ",
+    "romania": "RO",
+    "hungary": "HU",
+    "bulgaria": "BG",
+    "slovakia": "SK",
+    "denmark": "DK",
+    "finland": "FI",
+    "ireland": "IE",
+    "croatia": "HR",
+    "serbia": "RS",
+    "lithuania": "LT",
+    "latvia": "LV",
+    "estonia": "EE",
+    "slovenia": "SI",
+    "belarus": "BY",
+    "albania": "AL",
+    "north macedonia": "MK",
+    "macedonia": "MK",
+    "bosnia and herzegovina": "BA",
+    "bosnia": "BA",
+    "montenegro": "ME",
+    "moldova": "MD",
+    "republic of moldova": "MD",
+    "iceland": "IS",
+    "luxembourg": "LU",
+
+    // Americas
+    "united states": "US",
+    "united states of america": "US",
+    "usa": "US",
+    "america": "US",
+    "canada": "CA",
+    "mexico": "MX",
+    "brazil": "BR",
+    "argentina": "AR",
+    "chile": "CL",
+    "colombia": "CO",
+    "venezuela": "VE",
+    "peru": "PE",
+    "ecuador": "EC",
+    "bolivia": "BO",
+    "paraguay": "PY",
+    "uruguay": "UY",
+    "guyana": "GY",
+    "suriname": "SR",
+    "french guiana": "GF",
+    "costa rica": "CR",
+    "panama": "PA",
+    "guatemala": "GT",
+    "honduras": "HN",
+    "nicaragua": "NI",
+    "el salvador": "SV",
+    "belize": "BZ",
+    "cuba": "CU",
+    "dominican republic": "DO",
+    "haiti": "HT",
+    "jamaica": "JM",
+    "trinidad and tobago": "TT",
+    "trinidad": "TT",
+
+    // Asia
+    "china": "CN",
+    "people s republic of china": "CN",
+    "prc": "CN",
+    "india": "IN",
+    "japan": "JP",
+    "south korea": "KR",
+    "republic of korea": "KR",
+    "korea": "KR",
+    "north korea": "KP",
+    "democratic people s republic of korea": "KP",
+    "dprk": "KP",
+    "indonesia": "ID",
+    "thailand": "TH",
+    "vietnam": "VN",
+    "viet nam": "VN",
+    "pakistan": "PK",
+    "singapore": "SG",
+    "malaysia": "MY",
+    "philippines": "PH",
+    "bangladesh": "BD",
+    "myanmar": "MM",
+    "burma": "MM",
+    "cambodia": "KH",
+    "laos": "LA",
+    "nepal": "NP",
+    "sri lanka": "LK",
+    "afghanistan": "AF",
+    "kazakhstan": "KZ",
+    "uzbekistan": "UZ",
+    "turkmenistan": "TM",
+    "kyrgyzstan": "KG",
+    "tajikistan": "TJ",
+    "mongolia": "MN",
+    "taiwan": "TW",
+    "republic of china": "TW",
+    "bhutan": "BT",
+    "brunei": "BN",
+    "timor leste": "TL",
+    "east timor": "TL",
+
+    // Middle East
+    "saudi arabia": "SA",
+    "uae": "AE",
+    "united arab emirates": "AE",
+    "emirates": "AE",
+    "iran": "IR",
+    "persia": "IR",
+    "iraq": "IQ",
+    "israel": "IL",
+    "egypt": "EG",
+    "turkey": "TR",
+    "turkiye": "TR",
+    "kuwait": "KW",
+    "jordan": "JO",
+    "lebanon": "LB",
+    "syria": "SY",
+    "syrian arab republic": "SY",
+    "yemen": "YE",
+    "oman": "OM",
+    "qatar": "QA",
+    "bahrain": "BH",
+    "palestine": "PS",
+    "state of palestine": "PS",
+    "armenia": "AM",
+    "azerbaijan": "AZ",
+    "georgia": "GE",
+    "cyprus": "CY",
+
+    // Africa
+    "south africa": "ZA",
+    "nigeria": "NG",
+    "ethiopia": "ET",
+    "kenya": "KE",
+    "morocco": "MA",
+    "tunisia": "TN",
+    "uganda": "UG",
+    "ghana": "GH",
+    "mali": "ML",
+    "democratic republic of the congo": "CD",
+    "dr congo": "CD",
+    "congo kinshasa": "CD",
+    "drc": "CD",
+    "angola": "AO",
+    "senegal": "SN",
+    "algeria": "DZ",
+    "libya": "LY",
+    "sudan": "SD",
+    "south sudan": "SS",
+    "somalia": "SO",
+    "tanzania": "TZ",
+    "mozambique": "MZ",
+    "zimbabwe": "ZW",
+    "botswana": "BW",
+    "namibia": "NA",
+    "zambia": "ZM",
+    "malawi": "MW",
+    "madagascar": "MG",
+    "cameroon": "CM",
+    "cote d ivoire": "CI",
+    "ivory coast": "CI",
+    "niger": "NE",
+    "burkina faso": "BF",
+    "chad": "TD",
+    "central african republic": "CF",
+    "car": "CF",
+    "republic of the congo": "CG",
+    "congo brazzaville": "CG",
+    "gabon": "GA",
+    "equatorial guinea": "GQ",
+    "rwanda": "RW",
+    "burundi": "BI",
+    "djibouti": "DJ",
+    "eritrea": "ER",
+    "benin": "BJ",
+    "togo": "TG",
+    "sierra leone": "SL",
+    "liberia": "LR",
+    "mauritania": "MR",
+    "gambia": "GM",
+    "guinea": "GN",
+    "guinea bissau": "GW",
+    "lesotho": "LS",
+    "eswatini": "SZ",
+    "swaziland": "SZ",
+
+    // Oceania
+    "australia": "AU",
+    "new zealand": "NZ",
+    "papua new guinea": "PG",
+    "png": "PG",
+    "fiji": "FJ",
+    "solomon islands": "SB",
+    "vanuatu": "VU",
+    "new caledonia": "NC",
+    "samoa": "WS",
+  };
+
+  const countryCodeToNames = new Map<string, Set<string>>();
+  for (const [name, code] of Object.entries(countryNameToCode)) {
+    if (!countryCodeToNames.has(code)) {
+      countryCodeToNames.set(code, new Set());
+    }
+    countryCodeToNames.get(code)!.add(name);
+  }
+  return countryCodeToNames;
+}
+
 export type GpfDerived = {
   turn: number;
   periodLabel: string;
@@ -21,6 +256,7 @@ export type GpfDerived = {
   signals: UiSignal[];
   briefings: UiBriefingItem[];
   countryColors: CountryColorMap[];
+  countryCodeToNames?: Map<string, Set<string>>;
 };
 
 export function deriveGpf(snapshot: GameSnapshot, mode: "relationship" | "world-events" = "world-events"): GpfDerived {
@@ -99,6 +335,9 @@ export function deriveGpf(snapshot: GameSnapshot, mode: "relationship" | "world-
   const briefingsDet = deriveBriefingFeed(snapshot);
   const countryColors = deriveCountryColors(snapshot, mode);
 
+  // Build country code to names mapping for hover
+  const countryCodeToNames = buildCountryCodeToNamesMap();
+
   const hotspots: UiHotspot[] = hotspotsDet;
   const briefings: UiBriefingItem[] = briefingsDet;
 
@@ -114,6 +353,7 @@ export function deriveGpf(snapshot: GameSnapshot, mode: "relationship" | "world-
     signals: signalsDet,
     briefings,
     countryColors,
+    countryCodeToNames,
   };
 }
 
