@@ -1,5 +1,13 @@
 import { prisma } from "./client";
-import { buildCountryProfile, PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
+import {
+  buildCountryProfile,
+  PlayerActionSchema,
+  type GameSnapshot,
+  type IncomingEvent,
+  type PlayerAction,
+  type TurnOutcome,
+  type WorldState,
+} from "@/engine";
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
 import {
   llmGenerateControlRoomView,
@@ -579,6 +587,7 @@ export async function submitTurn(
 
   // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
+  let nextTurnPkg: { briefing: WorldState["current"]["briefing"]; events: IncomingEvent[] } | null = null;
   if (!outcome.failure && llmMode() === "ON") {
     try {
       const recent = await prisma.turnLog.findMany({
@@ -595,6 +604,7 @@ export async function submitTurn(
       });
       nextWorld.current.briefing = pkg.briefing;
       nextWorld.current.incomingEvents = pkg.events;
+      nextTurnPkg = { briefing: pkg.briefing, events: pkg.events };
       llmArtifact = pkg.llmRaw;
     } catch {
       // Proceed without LLM changes.
@@ -611,6 +621,20 @@ export async function submitTurn(
     : undefined;
 
   const finalOutcome: TurnOutcome = failure ? { ...outcome, failure } : outcome;
+
+  // If we successfully generated a next-turn package, ensure the returned snapshot reflects it.
+  // `submitTurnAndAdvance` produced `nextSnapshot` before we patched `nextWorld.current`, so we must stamp it here.
+  if (nextTurnPkg) {
+    finalOutcome.nextSnapshot.playerView.briefing = nextTurnPkg.briefing;
+    finalOutcome.nextSnapshot.playerView.incomingEvents = nextTurnPkg.events.map((e) => ({
+      id: e.id,
+      type: e.type,
+      actor: e.actor,
+      urgency: e.urgency,
+      visibleDescription: e.visibleDescription,
+      playerChoicesHints: e.playerChoicesHints,
+    }));
+  }
 
   // Optional LLM-generated dossier refresh for the *next* snapshot.
   if (!fastMode() && llmMode() === "ON") {

@@ -943,6 +943,7 @@ export async function llmGenerateResolution(args: {
     "- 2–4 WEEKS:",
     "- 2–3 MONTHS:",
     "- 4–6 MONTHS:",
+    "Formatting hard rule: include ALL four time-block lines verbatim as prefixes. Easiest: make the FINAL 4 narrative array entries start with those prefixes.",
     "Each time block line must include at least one concrete impact on: economy, domestic politics, security/war, or external posture.",
     "Minimum narrative length: 10 lines. Maximum: 18 lines.",
   ].join("\n");
@@ -1096,7 +1097,7 @@ export async function llmGenerateResolution(args: {
   };
 
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const extra =
         attempt === 0
@@ -1106,6 +1107,7 @@ export async function llmGenerateResolution(args: {
               "REPAIR MODE:",
               "Your previous response failed validation. Fix it and return ONLY valid JSON.",
               "Do NOT add extra keys. Do NOT add commentary. Follow all narrative constraints exactly.",
+              "You MUST include the 4 required time-block lines. Put them as the LAST 4 narrative entries.",
               lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : "",
             ].join("\n");
       const out = await chatJson({
@@ -1113,7 +1115,7 @@ export async function llmGenerateResolution(args: {
         user,
         schemaName: attempt === 0 ? "LlmResolutionSchema" : "LlmResolutionSchema_retry",
         validate: validateResolution,
-        temperature: attempt === 0 ? 0.55 : 0.2,
+        temperature: attempt === 0 ? 0.45 : attempt === 1 ? 0.25 : 0.15,
       });
       return { data: out.data, llmRaw: out.raw };
     } catch (e) {
