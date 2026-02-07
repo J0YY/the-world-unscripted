@@ -13,6 +13,31 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
 
   const turnResolved = snapshot.turn - 1;
 
+  // MUST be declared before any conditional returns (rules of hooks).
+  const shiftsBlock = useMemo(() => {
+    if (turnResolved < 1) return null;
+    if (!shiftLines) {
+      return (
+        <div className="px-4 py-2 border-b border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] text-[10px] font-mono text-[var(--ds-gray-600)]">
+          Syncing diplomatic shifts…
+        </div>
+      );
+    }
+    if (shiftLines.length === 0) return null;
+    return (
+      <div className="px-4 py-2 border-b border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Recent shifts</div>
+        <ul className="mt-1 space-y-1 list-none pl-0">
+          {shiftLines.slice(0, 8).map((l) => (
+            <li key={l} className="text-[11px] font-mono text-[var(--ds-gray-900)]">
+              {l}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }, [shiftLines, turnResolved]);
+
   // Keep local diplomacy state in sync with newest snapshot.
   useEffect(() => {
     setDiplomacy(snapshot.diplomacy ?? null);
@@ -21,8 +46,8 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
   // If diplomacy isn't ready yet, poll snapshot until it appears (localized polling; avoids global request spam).
   useEffect(() => {
     if (snapshot.llmMode !== "ON") return;
-    if (diplomacy && Array.isArray(diplomacy.nations) && diplomacy.nations.length > 0) return;
-    const ac = new AbortController();
+    const nationsLen = diplomacy?.nations?.length ?? 0;
+    if (nationsLen > 0) return;
     let stopped = false;
     const startedAt = Date.now();
     const maxMs = 60_000;
@@ -44,9 +69,8 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
 
     return () => {
       stopped = true;
-      ac.abort();
     };
-  }, [gameId, snapshot.llmMode, diplomacy]);
+  }, [gameId, snapshot.llmMode, diplomacy?.nations?.length]);
 
   useEffect(() => {
     if (turnResolved < 1) return;
@@ -95,30 +119,6 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
   const selectedNation = selectedNationId
     ? diplomacy.nations.find((n) => n.id === selectedNationId)
     : null;
-
-  const shiftsBlock = useMemo(() => {
-    if (turnResolved < 1) return null;
-    if (!shiftLines) {
-      return (
-        <div className="px-4 py-2 border-b border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] text-[10px] font-mono text-[var(--ds-gray-600)]">
-          Syncing diplomatic shifts…
-        </div>
-      );
-    }
-    if (shiftLines.length === 0) return null;
-    return (
-      <div className="px-4 py-2 border-b border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]">
-        <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Recent shifts</div>
-        <ul className="mt-1 space-y-1 list-none pl-0">
-          {shiftLines.slice(0, 8).map((l) => (
-            <li key={l} className="text-[11px] font-mono text-[var(--ds-gray-900)]">
-              {l}
-            </li>
-          ))}
-        </ul>
-      </div>
-    );
-  }, [shiftLines, turnResolved]);
 
   return (
     <div className="border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] rounded-lg overflow-hidden flex flex-col h-[500px]">
