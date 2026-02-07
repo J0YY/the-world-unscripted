@@ -1,24 +1,124 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { Send, ArrowLeft, Globe, ShieldAlert, BadgeCheck } from "lucide-react";
 import type { GameSnapshot, ForeignPower } from "@/engine";
 import { motion, AnimatePresence } from "framer-motion";
+import { apiResolutionReport, apiSnapshot } from "@/components/api";
 
 export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSnapshot; gameId: string }) {
   const [selectedNationId, setSelectedNationId] = useState<string | null>(null);
+  const [shiftLines, setShiftLines] = useState<string[] | null>(null);
+  const [diplomacy, setDiplomacy] = useState<GameSnapshot["diplomacy"] | null>(snapshot.diplomacy ?? null);
 
-  if (!snapshot.diplomacy) {
+  const turnResolved = snapshot.turn - 1;
+
+  // Keep local diplomacy state in sync with newest snapshot.
+  useEffect(() => {
+    setDiplomacy(snapshot.diplomacy ?? null);
+  }, [snapshot.diplomacy]);
+
+  // If diplomacy isn't ready yet, poll snapshot until it appears (localized polling; avoids global request spam).
+  useEffect(() => {
+    if (snapshot.llmMode !== "ON") return;
+    if (diplomacy && Array.isArray(diplomacy.nations) && diplomacy.nations.length > 0) return;
+    const ac = new AbortController();
+    let stopped = false;
+    const startedAt = Date.now();
+    const maxMs = 60_000;
+    const delaysMs = [1200, 1800, 2600, 3600, 5200, 7500, 10_000];
+
+    void (async () => {
+      for (let i = 0; !stopped && Date.now() - startedAt < maxMs; i++) {
+        const delay = delaysMs[Math.min(i, delaysMs.length - 1)] ?? 4000;
+        await new Promise((r) => setTimeout(r, delay));
+        if (stopped) return;
+        const s = await apiSnapshot(gameId);
+        if (stopped) return;
+        if (s?.diplomacy && Array.isArray(s.diplomacy.nations) && s.diplomacy.nations.length > 0) {
+          setDiplomacy(s.diplomacy);
+          break;
+        }
+      }
+    })().catch(() => {});
+
+    return () => {
+      stopped = true;
+      ac.abort();
+    };
+  }, [gameId, snapshot.llmMode, diplomacy]);
+
+  useEffect(() => {
+    if (turnResolved < 1) return;
+    const ac = new AbortController();
+    setShiftLines(null);
+    apiResolutionReport(gameId, turnResolved, { signal: ac.signal })
+      .then((r) => {
+        const rep = r as {
+          actorFieldDeltas?: Array<{ actorId: string; field: string; before: number; after: number; delta: number }>;
+          postureChanges?: Array<{ actorId: string; before: string; after: string }>;
+        };
+        const field = Array.isArray(rep.actorFieldDeltas) ? rep.actorFieldDeltas : [];
+        const posture = Array.isArray(rep.postureChanges) ? rep.postureChanges : [];
+
+        const prettyField = (f: string) => {
+          if (f === "willingnessToEscalate") return "escalation";
+          if (f === "domesticPressure") return "domestic pressure";
+          if (f === "sanctionsPolicyStrength") return "sanctions policy";
+          if (f === "allianceCommitmentStrength") return "alliance commitment";
+          return f;
+        };
+
+        const lines: string[] = [];
+        for (const d of field.slice(0, 10)) {
+          const delta = d.delta;
+          const sign = delta > 0 ? "+" : "";
+          lines.push(`Diplomacy: ${d.actorId} ${prettyField(d.field)} changed ${d.before} → ${d.after} (${sign}${delta})`);
+        }
+        for (const p of posture.slice(0, 6)) {
+          lines.push(`Diplomacy: ${p.actorId} posture changed ${p.before} → ${p.after}`);
+        }
+        setShiftLines(lines.filter(Boolean));
+      })
+      .catch(() => setShiftLines([]));
+    return () => ac.abort();
+  }, [gameId, turnResolved]);
+
+  if (!diplomacy) {
     return (
       <div className="p-4 border border-[var(--ds-gray-alpha-200)] rounded bg-[var(--ds-gray-alpha-100)] text-xs text-[var(--ds-gray-500)] text-center font-mono">
-        Diplomatic channels unavailable.
+        {snapshot.llmMode === "ON" ? "Generating diplomatic channels…" : "Diplomatic channels unavailable."}
       </div>
     );
   }
 
   const selectedNation = selectedNationId
-    ? snapshot.diplomacy.nations.find((n) => n.id === selectedNationId)
+    ? diplomacy.nations.find((n) => n.id === selectedNationId)
     : null;
+
+  const shiftsBlock = useMemo(() => {
+    if (turnResolved < 1) return null;
+    if (!shiftLines) {
+      return (
+        <div className="px-4 py-2 border-b border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] text-[10px] font-mono text-[var(--ds-gray-600)]">
+          Syncing diplomatic shifts…
+        </div>
+      );
+    }
+    if (shiftLines.length === 0) return null;
+    return (
+      <div className="px-4 py-2 border-b border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Recent shifts</div>
+        <ul className="mt-1 space-y-1 list-none pl-0">
+          {shiftLines.slice(0, 8).map((l) => (
+            <li key={l} className="text-[11px] font-mono text-[var(--ds-gray-900)]">
+              {l}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }, [shiftLines, turnResolved]);
 
   return (
     <div className="border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] rounded-lg overflow-hidden flex flex-col h-[500px]">
@@ -28,6 +128,7 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
           Diplomatic Corps
         </h2>
       </div>
+      {shiftsBlock}
 
       <div className="flex-1 overflow-hidden relative">
         <AnimatePresence mode="wait">
@@ -39,7 +140,7 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
               exit={{ opacity: 0, x: -20 }}
               className="h-full overflow-y-auto p-2 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
             >
-              {snapshot.diplomacy.nations.map((nation) => (
+              {diplomacy.nations.map((nation) => (
                 <button
                   key={nation.id}
                   onClick={() => setSelectedNationId(nation.id)}

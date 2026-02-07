@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence, motion } from "framer-motion";
 import type { UiBriefingItem } from "./types";
 
 const sourceColors: Record<UiBriefingItem["source"], string> = {
@@ -23,26 +24,32 @@ export default function BriefingFeed({ briefings }: { briefings: UiBriefingItem[
             Generating briefing feed…
           </div>
         ) : null}
-        {briefings.map((briefing) => (
-          <div
-            key={briefing.id}
-            className="p-2 bg-[var(--ds-background-100)] border border-[var(--ds-gray-alpha-200)] rounded text-xs font-mono"
-          >
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-[var(--ds-gray-500)]">{briefing.timestamp}</span>
-              <span
-                className="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide"
-                style={{
-                  backgroundColor: `${sourceColors[briefing.source]}20`,
-                  color: sourceColors[briefing.source],
-                }}
-              >
-                {briefing.source}
-              </span>
-            </div>
-            <p className="m-0 text-[var(--ds-gray-1000)] leading-relaxed">{briefing.content}</p>
-          </div>
-        ))}
+        <AnimatePresence initial={false}>
+          {briefings.map((briefing, idx) => (
+            <motion.div
+              key={briefing.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+              transition={{ duration: 0.22, ease: "easeOut", delay: Math.min(idx * 0.1, 0.9) }}
+              className="p-2 bg-[var(--ds-background-100)] border border-[var(--ds-gray-alpha-200)] rounded text-xs font-mono"
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[var(--ds-gray-500)]">{briefing.timestamp}</span>
+                <span
+                  className="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide"
+                  style={{
+                    backgroundColor: `${sourceColors[briefing.source]}20`,
+                    color: sourceColors[briefing.source],
+                  }}
+                >
+                  {briefing.source}
+                </span>
+              </div>
+              <p className="m-0 text-[var(--ds-gray-1000)] leading-relaxed">{briefing.content}</p>
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );
