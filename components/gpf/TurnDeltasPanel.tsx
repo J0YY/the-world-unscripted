@@ -20,7 +20,8 @@ function deltaClass(label: string, delta: number) {
 }
 
 function arrowSymbol(delta: number) {
-  if (!Number.isFinite(delta) || delta === 0) return "—";
+  // Avoid a dash that looks like a negative sign in the UI.
+  if (!Number.isFinite(delta) || delta === 0) return "↔";
   return delta > 0 ? "▲" : "▼";
 }
 

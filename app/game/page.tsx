@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { GameSnapshot, TurnOutcome } from "@/engine";
-import { apiSnapshot, apiSubmitTurnWithDirective } from "@/components/api";
+import { apiResolutionReport, apiSnapshot, apiSubmitTurnWithDirective } from "@/components/api";
 import GlobalPressureFieldPage from "@/components/gpf/GlobalPressureFieldPage";
 import { PromptConsole } from "@/components/PromptConsole";
 import { getStoredGameId, setLastFailure, setLastOutcome } from "@/components/storage";
@@ -58,6 +58,13 @@ export default function GameControlRoomPage() {
 
       const next = outcome.nextSnapshot;
       setSnap(next);
+
+      // Start the expensive LLM work immediately and concurrently:
+      // - resolution narrative for the resolved turn (for AfterAction modal)
+      // - next snapshot hydration (Turn N+1 briefing/events)
+      // This overlaps LLM latency with the time the user is reading the modal.
+      void apiResolutionReport(gameId, outcome.turnResolved, { forceLlm: true }).catch(() => {});
+      void apiSnapshot(gameId).then(setSnap).catch(() => {});
     }
   }
 

@@ -228,6 +228,8 @@ function fallbackActionsFromDirective(args: {
   const wantConquest = /\bconquer\b|\boccupy\b|\btake over\b|\bseize\b|\bannex\b|\binvade\b/.test(d);
   const wantMobilize = /\bmobiliz(e|ation)\b|\btroops\b|\bdeploy\b|\bposture\b/.test(d);
   const wantIntel = /\bintel\b|\bspy\b|\bsurveillance\b|\bcounterintel\b|\bcovert\b/.test(d);
+  const wantKidnap = /\b(kidnap|abduct|snatch|rendition|hostage)\b/.test(d);
+  const wantExtort = /\b(extort|ransom|blackmail)\b/.test(d);
   const wantNarrative = /\bpropaganda\b|\bnarrative\b|\bmedia\b|\bcensor\b/.test(d);
   const wantReform = /\banti-corruption\b|\breform\b|\bpurge\b|\belection\b/.test(d);
 
@@ -303,6 +305,17 @@ function fallbackActionsFromDirective(args: {
       targetActor: targetActorId,
     });
     rationale.push("Translate intelligence intent into surveillance to reduce deception risk.");
+  }
+  if ((wantKidnap || wantExtort) && actions.length < args.remainingSlots) {
+    actions.push({
+      kind: "INTEL",
+      subkind: "COVERT_OP",
+      intensity: Math.max(2, intensity) as 1 | 2 | 3,
+      isPublic: false,
+      targetActor: targetActorId,
+      targetRegion: targetRegion ?? "leadership circle",
+    });
+    rationale.push("Translate abduction/extortion intent into a covert operation (illegal/unethical actions are modeled as covert ops).");
   }
   if (wantNarrative && actions.length < args.remainingSlots) {
     actions.push({ kind: "MEDIA", subkind: "NARRATIVE_FRAMING", intensity: Math.max(1, intensity - 0) as 1 | 2 | 3, isPublic: true });
@@ -1063,7 +1076,9 @@ export async function getResolutionReport(
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
   // Only reuse cached LLM artifacts if they actually contain a usable narrative.
   // Old/partial cached shapes can have a headline but no narrative, which makes the UI look blank.
-  if (!opts?.forceLlm && existing && typeof existing === "object") {
+  // If we already have a valid cached LLM narrative, return it even when `forceLlm=1`.
+  // `forceLlm` means "ensure AI is present", not "regenerate every time".
+  if (existing && typeof existing === "object") {
     const n = (existing as Record<string, unknown>)["narrative"];
     const lines = Array.isArray(n) ? n.filter((x) => typeof x === "string").map((s) => String(s).trim()).filter(Boolean) : [];
     const hasTimeline =
