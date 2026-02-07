@@ -1,9 +1,11 @@
-import type { CountryProfile, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
+import type { CountryProfile, ForeignPower, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
 import type { z } from "zod";
 import {
   LlmControlRoomViewSchema,
   LlmCountryProfileSchema,
+  LlmDiplomacySchema,
+  LlmDiplomacyChatResponseSchema,
   LlmGenerateTurnPackageSchema,
   LlmParseDirectiveSchema,
   LlmResolutionSchema,
@@ -1360,4 +1362,163 @@ async function chatTextOpenAI(args: {
   if (!res.ok) throw new Error(`OpenAI error (${res.status})`);
 
   return extractChatContent(payload);
+}
+
+export async function llmGenerateDiplomacy(args: {
+  world: WorldState;
+}): Promise<{ nations: ForeignPower[]; llmRaw: unknown }> {
+  // Deterministic fallback function (used if LLM is OFF or fails)
+  const getDeterministicDiplomacy = () => ({
+      nations: Object.values(args.world.actors).map((a) => ({
+        id: a.id,
+        name: a.name,
+        ministerName: (a.id === "US" ? "President" : a.id === "CHINA" ? "General Secretary" : "Ambassador") + " " + a.name.split(" ")[0],
+        description: (a.id.startsWith("REGIONAL") ? "A neighboring power" : "A major global power") + " with " + a.postureTowardPlayer + " posture.",
+        stance: a.trust,
+        hiddenAgenda: "To maintain their sphere of influence.",
+        chatHistory: [],
+      })),
+      llmRaw: { generatedBy: "deterministic_fallback" },
+  });
+
+  if (llmMode() === "OFF") {
+    return getDeterministicDiplomacy();
+  }
+
+  const system = [
+    "You are a narrative designer for a geopolitical simulation.",
+    "Generate flavor profiles for the rival nations.",
+    "Minister names should be Heads of State or High Representatives (President, Prime Minister, General, Ambassador) appropriate for their region.",
+    "Hidden agendas should be suspicious and self-interested.",
+    "Note: REGIONAL actors are direct neighbors. Major powers (US, CHINA, RUSSIA, EU) are likely distant but influential.",
+  ].join("\n");
+
+
+  const context = {
+    actors: Object.values(args.world.actors).map((a) => ({
+      id: a.id,
+      name: a.name,
+      posture: a.postureTowardPlayer,
+      trust: a.trust,
+      objectives: a.objectives,
+    })),
+  };
+
+  const user = [
+    "CONTEXT:",
+    JSON.stringify(context, null, 2),
+    "",
+    "Generate profiles for these actors.",
+    "Return JSON matching key 'nations' array.",
+  ].join("\n");
+
+  try {
+    const { data, raw } = await chatJson({
+      system,
+      user,
+      schemaName: "LlmDiplomacySchema",
+      validate: (obj) => LlmDiplomacySchema.parse(obj),
+      temperature: 0.7,
+    });
+
+    // Merge with engine state and Deduplicate
+    let nations: ForeignPower[] = data.nations.map((n) => {
+      const actor = args.world.actors[n.id as keyof typeof args.world.actors];
+      return {
+        ...n,
+        stance: actor ? actor.trust : 50, // Sync stance with engine trust
+        chatHistory: [],
+      };
+    });
+
+    // Deduplicate by name (prefer keeping Global powers or first occurrence)
+    // We assume major powers like US, CHINA, RUSSIA, EU should act as the canonical entry if a neighbor has the same name.
+    const seenNames = new Set<string>();
+    nations = nations.filter((n) => {
+      if (seenNames.has(n.name)) return false;
+      seenNames.add(n.name);
+      return true;
+    });
+
+    return { nations, llmRaw: raw };
+  } catch (error) {
+    console.warn("llmGenerateDiplomacy failed, using fallback:", error);
+    return getDeterministicDiplomacy();
+  }
+}
+
+export async function llmDiplomacyChat(args: {
+  world: WorldState;
+  nation: ForeignPower;
+  userMessage: string;
+  history: Array<{ role: "user" | "minister"; text: string }>;
+}): Promise<{ reply: string; trustChange?: number; escalationChange?: number; headline?: string }> {
+  // Fallback for AI-Offline mode so chat is always responsive
+  if (llmMode() === "OFF") {
+      const responses = [
+          "I acknowledge your message, though secure channels are currently limited.",
+          "We have received your communique.",
+          "This is not the time for deep discussion.",
+          "Interesting. we will take this into consideration.",
+      ];
+      // Deterministic pseudo-random pick based on message length
+      return { reply: responses[args.userMessage.length % responses.length] };
+  }
+
+  const system = [
+    "You are " + args.nation.ministerName + ", representing " + args.nation.name + ".",
+    "Description: " + args.nation.description,
+    "Your Stance toward player has a Trust Score of " + args.nation.stance + "/100.",
+    "Your Hidden Agenda: " + args.nation.hiddenAgenda,
+    "",
+    "Instructions:",
+    "- ACT AS A LEADER/PEER: You are the head of your nation (President/PM), NOT a subordinate.",
+    "- EXTREMELY BRIEF & DIRECT: Responses must be 1-2 SHORT sentences max. Like a secure cable or text.",
+    "- TONE: Casual confidence, authoritative, guarded. No 'diplomatic fluff'.",
+    "- Be self-interested. Even if friendly, you put your nation's needs first.",
+    "- If Stance is low (Trust < 40): Be hostile, dismissive.",
+    "- If Stance is high (Trust > 70): Be collaborative but transactional.",
+    "- UNIQUE VOICE: If you are a neighbor, mention border tensions. If a global power, act like a superpower.",
+    "- IMPACT: Decide if this conversation offends you (Trust decreases) or pleases you (Trust increases).",
+    "- REACT: Mention global headlines if relevant.",
+    "Return JSON with 'reply', 'trustChange', 'escalationChange', and optionally 'generatedHeadline'."
+  ].join("\n");
+
+  // Providing richer context for "chit chat"
+  const context = {
+     turn: args.world.turn,
+     globalTension: args.world?.global?.globalTradeTemperature ?? 50, 
+     headlines: args.world?.current?.briefing?.headlines ?? [],
+     recentEvents: args.world?.current?.incomingEvents?.map(e => e.visibleDescription).slice(0, 4) ?? []
+  };
+
+  const user = [
+    "CONTEXT:",
+    JSON.stringify(context, null, 2),
+    "",
+    "HISTORY:",
+    ...(args.history || []).map((m) => (m.role ? m.role.toUpperCase() + ": " + m.text : "UNKNOWN: " + m.text)),
+    "",
+    "USER: " + args.userMessage, // Explicitly label user message
+    "RESPONSE (JSON):", // Prompt for completion
+  ].join("\n");
+
+  try {
+     const { data } = await chatJson({
+        system,
+        user,
+        schemaName: "LlmDiplomacyChatResponseSchema",
+        validate: (obj) => LlmDiplomacyChatResponseSchema.parse(obj),
+        temperature: 0.8,
+     });
+     return {
+       reply: data.reply,
+       trustChange: data.trustChange,
+       escalationChange: data.escalationChange,
+       headline: data.generatedHeadline
+     };
+  } catch (e) {
+     console.error("LLM Chat Failed", e);
+     return { reply: "The line is dead. (Connection error)" };
+  }
 }

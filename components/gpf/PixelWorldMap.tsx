@@ -7,6 +7,7 @@ import { mapModeConfig, type MapMode, type CountryColorMap } from "./types";
 type DottedMapData = Record<string, Array<{ lon: number; lat: number; cityDistanceRank: number }>>;
 
 const modeColors: Record<MapMode, { high: string; med: string; low: string }> = {
+  pressure: { high: "#dc2626", med: "#f97316", low: "#3b82f6" },
   relationship: { high: "#dc2626", med: "#eab308", low: "#22c55e" },
   "world-events": { high: "#ffffff", med: "#ffffff", low: "#ffffff" },
 };

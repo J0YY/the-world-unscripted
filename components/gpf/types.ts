@@ -1,4 +1,4 @@
-export type MapMode = "relationship" | "world-events";
+export type MapMode = "pressure" | "relationship" | "world-events";
 
 export type Trend = "up" | "down" | "stable";
 
@@ -40,6 +40,11 @@ export const mapModeConfig: Record<
   MapMode,
   { label: string; legendLabel: string; hotspotLabel: string }
 > = {
+  pressure: {
+    label: "Pressure",
+    legendLabel: "Global Pressure",
+    hotspotLabel: "Pressure Points",
+  },
   relationship: {
     label: "Relationship",
     legendLabel: "International Relations",

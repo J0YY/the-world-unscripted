@@ -11,6 +11,7 @@ import {
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
 import {
   llmGenerateCountryProfile,
+  llmGenerateDiplomacy,
   llmGenerateResolution,
   llmGenerateWorldGenScenario,
   llmGenerateTurnPackage,
@@ -36,7 +37,8 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
     world.turnStartGenerator === "llm" &&
     (!world.current?.briefing?.text || world.current.briefing.text.trim().length < 10 || world.current.incomingEvents.length === 0);
   const needsDossier = snapshot.countryProfile?.generatedBy !== "llm";
-  if (!needsTurnStart && !needsDossier) return;
+  const needsDiplomacy = !snapshot.diplomacy || !Array.isArray(snapshot.diplomacy.nations) || snapshot.diplomacy.nations.length === 0;
+  if (!needsTurnStart && !needsDossier && !needsDiplomacy) return;
 
   const inflight = (globalThis.__twuoSnapshotHydrateInflight ??= new Map<string, Promise<void>>());
   const key = `${gameId}:${world.turn}:hydrate`;
@@ -47,7 +49,7 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
   }
 
   const run = (async () => {
-    const [pkgRes, dossierRes] = await Promise.allSettled([
+    const [pkgRes, dossierRes, dipRes] = await Promise.allSettled([
       needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
       needsDossier
         ? llmGenerateCountryProfile({
@@ -60,6 +62,7 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
             },
           })
         : Promise.resolve(null),
+      needsDiplomacy ? llmGenerateDiplomacy({ world }) : Promise.resolve(null),
     ]);
 
     if (pkgRes.status === "fulfilled" && pkgRes.value) {
@@ -80,8 +83,16 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
       snapshot.countryProfile = dossierRes.value.countryProfile;
     }
 
+    if (dipRes.status === "fulfilled" && dipRes.value && typeof dipRes.value === "object" && "nations" in dipRes.value) {
+      snapshot.diplomacy = { nations: (dipRes.value as { nations: GameSnapshot["diplomacy"]["nations"] }).nations };
+    }
+
     // Persist only if we actually improved anything.
-    if ((pkgRes.status === "fulfilled" && pkgRes.value) || (dossierRes.status === "fulfilled" && dossierRes.value)) {
+    if (
+      (pkgRes.status === "fulfilled" && pkgRes.value) ||
+      (dossierRes.status === "fulfilled" && dossierRes.value) ||
+      (dipRes.status === "fulfilled" && dipRes.value)
+    ) {
       await prisma.game.update({
         where: { id: gameId },
         data: {
@@ -600,6 +611,12 @@ export async function submitTurn(
   }
 
   const { world: nextWorld, outcome } = submitTurnAndAdvance(gameId, world, actions);
+
+  // Preserve diplomacy state across turns (so `DiplomacyPanel` keeps working).
+  const lastSnap = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  if (lastSnap?.diplomacy) {
+    outcome.nextSnapshot.diplomacy = lastSnap.diplomacy;
+  }
 
   // Fill failure timeline from the last 3 turns (if applicable).
   const failure = outcome.failure

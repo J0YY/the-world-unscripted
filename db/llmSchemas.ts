@@ -391,3 +391,23 @@ export const LlmControlRoomViewSchema = z.object({
     continuityNotes: z.array(z.string().min(6).max(160)).max(6).optional(),
   }),
 });
+
+export const LlmDiplomacySchema = z.object({
+  nations: z.array(
+    z.object({
+      id: z.string(), // Must match ActorId
+      name: z.string(),
+      ministerName: z.string().min(2).max(60),
+      description: z.string().min(5).max(300),
+      hiddenAgenda: z.string().min(5).max(300),
+      avatarId: z.string().optional(),
+    }),
+  ),
+});
+
+export const LlmDiplomacyChatResponseSchema = z.object({
+  reply: z.string().describe("The diplomatic response text (1-2 sentences). MAX 25 words."),
+  trustChange: z.number().int().min(-15).max(15).describe("Change in actor's Trust score (-15 to +15) based on this interaction. Negative if offended, Positive if pleased."),
+  escalationChange: z.number().int().min(-10).max(10).describe("Change in willingness to escalate (-10 to +10). Optional."),
+  generatedHeadline: z.string().optional().describe("A VERY SHORT (max 6 words) global news headline if this interaction causes a public splash (e.g. 'US President snubs player'). Leave empty if private."),
+});
