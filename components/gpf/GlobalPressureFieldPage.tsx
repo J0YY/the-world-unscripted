@@ -13,6 +13,7 @@ import SignalsStrip from "./SignalsStrip";
 import BriefingFeed from "./BriefingFeed";
 import TourButton from "./TourButton";
 import IntelChatbot from "./IntelChatbot";
+import DiplomacyPanel from "../DiplomacyPanel";
 import { Info } from "lucide-react";
 
 const PixelWorldMap = dynamic(() => import("./PixelWorldMap"), {
@@ -31,11 +32,12 @@ export default function GlobalPressureFieldPage({
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
 }) {
-  const [mode, setMode] = useState<MapMode>("world-events");
+  const [mode, setMode] = useState<MapMode>("pressure");
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
+  const [leftTab, setLeftTab] = useState<"intel" | "diplomacy">("intel");
 
-  const derived = useMemo(() => deriveGpf(snapshot, mode), [snapshot, mode]);
+  const derived = useMemo(() => deriveGpf(snapshot), [snapshot]);
 
   return (
     <main className="font-mono min-h-screen max-w-[1800px] mx-auto relative overflow-hidden px-4 md:px-6 pt-6 md:pt-8 pb-8">
@@ -131,8 +133,27 @@ export default function GlobalPressureFieldPage({
           <div id="gpf-hotspots">
             {mode === "world-events" ? <TurnDeltasPanel snapshot={snapshot} /> : <HotspotList mode={mode} hotspots={derived.hotspots} />}
           </div>
-          <div id="gpf-intel">
-            <IntelChatbot llmMode={snapshot.llmMode} />
+          <div id="gpf-intel" className="flex flex-col gap-2">
+            <div className="flex items-center gap-3 border-b border-[var(--ds-gray-alpha-200)] pb-1 mb-1">
+               <button 
+                  onClick={() => setLeftTab("intel")}
+                  className={`px-1 text-xs font-mono uppercase tracking-tight transition-colors ${leftTab === "intel" ? "text-[var(--ds-gray-1000)] font-bold" : "text-[var(--ds-gray-500)] hover:text-[var(--ds-gray-900)]"}`}
+               >
+                  Intel
+               </button>
+               <div className="h-3 w-px bg-[var(--ds-gray-alpha-200)]" />
+               <button 
+                  onClick={() => setLeftTab("diplomacy")}
+                  className={`px-1 text-xs font-mono uppercase tracking-tight transition-colors ${leftTab === "diplomacy" ? "text-[var(--ds-gray-1000)] font-bold" : "text-[var(--ds-gray-500)] hover:text-[var(--ds-gray-900)]"}`}
+               >
+                  Diplomacy
+               </button>
+            </div>
+            {leftTab === "intel" ? (
+               <IntelChatbot llmMode={snapshot.llmMode} />
+            ) : (
+               <DiplomacyPanel snapshot={snapshot} gameId={snapshot.gameId} />
+            )}
           </div>
         </div>
 

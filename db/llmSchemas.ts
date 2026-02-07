@@ -373,3 +373,16 @@ export const LlmControlRoomViewSchema = z.object({
     continuityNotes: z.array(z.string().min(6).max(160)).max(6).optional(),
   }),
 });
+
+export const LlmDiplomacySchema = z.object({
+  nations: z.array(
+    z.object({
+      id: z.string(), // Must match ActorId
+      name: z.string(),
+      ministerName: z.string().min(2).max(60),
+      description: z.string().min(5).max(300),
+      hiddenAgenda: z.string().min(5).max(300),
+      avatarId: z.string().optional(),
+    }),
+  ),
+});

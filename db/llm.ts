@@ -1,9 +1,10 @@
-import type { CountryProfile, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
+import type { CountryProfile, ForeignPower, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
 import type { z } from "zod";
 import {
   LlmControlRoomViewSchema,
   LlmCountryProfileSchema,
+  LlmDiplomacySchema,
   LlmGenerateTurnPackageSchema,
   LlmParseDirectiveSchema,
   LlmResolutionSchema,
@@ -1342,4 +1343,142 @@ async function chatTextOpenAI(args: {
   if (!res.ok) throw new Error(`OpenAI error (${res.status})`);
 
   return extractChatContent(payload);
+}
+
+export async function llmGenerateDiplomacy(args: {
+  world: WorldState;
+}): Promise<{ nations: ForeignPower[]; llmRaw: unknown }> {
+  // Deterministic fallback function (used if LLM is OFF or fails)
+  const getDeterministicDiplomacy = () => ({
+      nations: Object.values(args.world.actors).map((a) => ({
+        id: a.id,
+        name: a.name,
+        ministerName: (a.id === "US" ? "President" : a.id === "CHINA" ? "General Secretary" : "Ambassador") + " " + a.name.split(" ")[0],
+        description: (a.id.startsWith("REGIONAL") ? "A neighboring power" : "A major global power") + " with " + a.postureTowardPlayer + " posture.",
+        stance: a.trust,
+        hiddenAgenda: "To maintain their sphere of influence.",
+        chatHistory: [],
+      })),
+      llmRaw: { generatedBy: "deterministic_fallback" },
+  });
+
+  if (llmMode() === "OFF") {
+    return getDeterministicDiplomacy();
+  }
+
+  const system = [
+    "You are a narrative designer for a geopolitical simulation.",
+    "Generate flavor profiles for the rival nations.",
+    "Minister names should be Heads of State or High Representatives (President, Prime Minister, General, Ambassador) appropriate for their region.",
+    "Hidden agendas should be suspicious and self-interested.",
+    "Note: REGIONAL actors are direct neighbors. Major powers (US, CHINA, RUSSIA, EU) are likely distant but influential.",
+  ].join("\n");
+
+
+  const context = {
+    actors: Object.values(args.world.actors).map((a) => ({
+      id: a.id,
+      name: a.name,
+      posture: a.postureTowardPlayer,
+      trust: a.trust,
+      objectives: a.objectives,
+    })),
+  };
+
+  const user = [
+    "CONTEXT:",
+    JSON.stringify(context, null, 2),
+    "",
+    "Generate profiles for these actors.",
+    "Return JSON matching key 'nations' array.",
+  ].join("\n");
+
+  try {
+    const { data, raw } = await chatJson({
+      system,
+      user,
+      schemaName: "LlmDiplomacySchema",
+      validate: (obj) => LlmDiplomacySchema.parse(obj),
+      temperature: 0.7,
+    });
+
+    // Merge with engine state
+    const nations: ForeignPower[] = data.nations.map((n) => {
+      const actor = args.world.actors[n.id as keyof typeof args.world.actors];
+      return {
+        ...n,
+        stance: actor ? actor.trust : 50, // Sync stance with engine trust
+        chatHistory: [],
+      };
+    });
+
+    return { nations, llmRaw: raw };
+  } catch (error) {
+    console.warn("llmGenerateDiplomacy failed, using fallback:", error);
+    return getDeterministicDiplomacy();
+  }
+}
+
+export async function llmDiplomacyChat(args: {
+  world: WorldState;
+  nation: ForeignPower;
+  userMessage: string;
+  history: Array<{ role: "user" | "minister"; text: string }>;
+}): Promise<string> {
+  // Fallback for AI-Offline mode so chat is always responsive
+  if (llmMode() === "OFF") {
+      const responses = [
+          "I acknowledge your message, though secure channels are currently limited.",
+          "We have received your communique.",
+          "This is not the time for deep discussion.",
+          "Interesting. we will take this into consideration.",
+      ];
+      // Deterministic pseudo-random pick based on message length
+      return responses[args.userMessage.length % responses.length];
+  }
+
+  const system = [
+    "You are " + args.nation.ministerName + ", representing " + args.nation.name + ".",
+    "Description: " + args.nation.description,
+    "Your Stance toward player: " + args.nation.stance + "/100.",
+    "Your Hidden Agenda: " + args.nation.hiddenAgenda,
+    "",
+    "Instructions:",
+    "- ACT AS A LEADER/PEER: You are the head of your nation, NOT the player's subordinate.",
+    "- Be self-interested. Even if friendly, you always put your nation's needs first.",
+    "- Keep responses short and punchy (1-2 sentences). No fluff.",
+    "- Avoid overly formal headers. This is a direct secure line.",
+    "- Tone: Professional but real. Can be cynical, guarded, or transactional.",
+    "- If Stance is low (<40), be hostile, demanding, or dismissive.",
+    "- If Stance is high (>70), be collaborative but expect reciprocity. Do not be sycophantic.",
+    "- REACT: Use global headlines to verify you are aware of the world state.",
+  ].join("\n");
+
+  // Providing richer context for "chit chat"
+  const context = {
+     turn: args.world.turn,
+     globalTension: args.world?.global?.globalTradeTemperature ?? 50, 
+     headlines: args.world?.current?.briefing?.headlines ?? [],
+     recentEvents: args.world?.current?.incomingEvents?.map(e => e.visibleDescription).slice(0, 4) ?? []
+  };
+
+  const user = [
+    "CONTEXT:",
+    JSON.stringify(context, null, 2),
+    "",
+    "HISTORY:",
+    ...(args.history || []).map((m) => (m.role ? m.role.toUpperCase() + ": " + m.text : "UNKNOWN: " + m.text)),
+    "",
+    "USER: " + args.userMessage, // Explicitly label user message
+    "MINISTER:", // Prompt for completion
+  ].join("\n");
+
+  try {
+     const reply = await llmChat({ system, user, temperature: 0.8 });
+     // Sometimes LLMs quote themselves like "Minister: Hello", strip that if present.
+     return reply.replace(/^(Minister|Response):?\s*/i, "").trim();
+  } catch (e) {
+     console.error("LLM Chat Failed", e);
+     return "The line is dead. (Connection error)";
+  }
 }

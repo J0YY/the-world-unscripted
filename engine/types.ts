@@ -273,11 +273,25 @@ export type CountryProfile = {
   generatedBy: "llm" | "deterministic";
 };
 
+export type ForeignPower = {
+  id: string;
+  name: string;
+  ministerName: string;
+  description: string;
+  stance: number; // 0-100
+  hiddenAgenda: string;
+  avatarId?: string;
+  chatHistory?: Array<{ role: "user" | "minister"; text: string; timestamp: number }>;
+};
+
 export type GameSnapshot = {
   gameId: string;
   turn: number;
   status: "ACTIVE" | "FAILED";
   countryProfile: CountryProfile;
+  diplomacy?: {
+    nations: ForeignPower[];
+  };
   playerView: PlayerViewState;
   actionLimit: number;
   actionTemplates: ActionTemplate[];

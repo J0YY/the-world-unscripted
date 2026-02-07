@@ -4,6 +4,7 @@ import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/e
 import {
   llmGenerateControlRoomView,
   llmGenerateCountryProfile,
+  llmGenerateDiplomacy,
   llmGenerateResolution,
   llmGenerateWorldGenScenario,
   llmGenerateTurnPackage,
@@ -393,6 +394,14 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
     }
   }
 
+  // Generate Diplomacy (Deterministic or LLM)
+  try {
+    const dip = await llmGenerateDiplomacy({ world });
+    snapshot.diplomacy = { nations: dip.nations };
+  } catch (e) {
+    console.error("Diplomacy Gen Failed", e);
+  }
+
   // Optional LLM-generated control-room view model for this turn.
   if (!fastMode()) {
     await attachControlRoomView(game.id, world, snapshot);
@@ -450,6 +459,22 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
       data: { lastPlayerSnapshot: snap as unknown as object },
     });
   }
+
+  // Backfill diplomacy if missing
+  if (!snap.diplomacy) {
+    const world = game.worldState as unknown as WorldState;
+    try {
+      const dip = await llmGenerateDiplomacy({ world });
+      snap.diplomacy = { nations: dip.nations };
+      await prisma.game.update({
+        where: { id: game.id },
+        data: { lastPlayerSnapshot: snap as unknown as object },
+      });
+    } catch (e) {
+      console.error("Diplomacy Backfill Failed", e);
+    }
+  }
+
   return snap;
 }
 
@@ -473,6 +498,21 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
       where: { id: gameId },
       data: { lastPlayerSnapshot: snapshot as unknown as object },
     });
+  }
+
+  // Backfill diplomacy if missing
+  if (!snapshot.diplomacy) {
+    const world = game.worldState as unknown as WorldState;
+    try {
+      const dip = await llmGenerateDiplomacy({ world });
+      snapshot.diplomacy = { nations: dip.nations };
+      await prisma.game.update({
+        where: { id: gameId },
+        data: { lastPlayerSnapshot: snapshot as unknown as object },
+      });
+    } catch (e) {
+      console.error("Diplomacy Backfill Failed", e);
+    }
   }
 
   // Backfill control-room view (LLM-first) so existing games render from LLM without requiring a new turn.
@@ -576,6 +616,20 @@ export async function submitTurn(
   }
 
   const { world: nextWorld, outcome } = submitTurnAndAdvance(gameId, world, actions);
+
+  // Preserve diplomacy state from previous turn, or generate if missing.
+  const lastSnap = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  if (lastSnap && lastSnap.diplomacy) {
+    outcome.nextSnapshot.diplomacy = lastSnap.diplomacy;
+    // TODO: Ideally we would update stances here based on the turn outcome.
+  } else {
+     try {
+       const dip = await llmGenerateDiplomacy({ world: nextWorld });
+       outcome.nextSnapshot.diplomacy = { nations: dip.nations };
+     } catch (e) {
+       console.error("Diplomacy Gen Failed in submitTurn", e);
+     }
+  }
 
   // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
