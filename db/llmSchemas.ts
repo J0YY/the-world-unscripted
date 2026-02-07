@@ -74,6 +74,33 @@ const EffectOpLiteSchema = z.discriminatedUnion("kind", [
   EffectSetSanctionsSchema,
 ]);
 
+const IncomingEventTypeSchema = z.preprocess((v) => {
+  if (typeof v !== "string") return v;
+  const raw = v.trim();
+  const t = raw.toUpperCase().replace(/[\s-]+/g, "_");
+  // Common model typos / synonyms → canonical enum.
+  if (t === "SANCTION_WARNING" || t === "SANCTIONS" || t === "SANCTION" || t === "SANCTIONS_THREAT") return "SANCTIONS_WARNING";
+  if (t === "BORDER" || t === "BORDER_CLASH" || t === "BORDER_SKIRMISH" || t === "BORDER_INCIDENTS") return "BORDER_INCIDENT";
+  if (t === "PROTEST" || t === "PROTEST_CALL" || t === "DEMONSTRATIONS") return "PROTESTS";
+  if (t === "LEAK" || t === "AUDIO_LEAK" || t === "LEAKED" || t === "LEAKED_TAPE") return "LEAKED_AUDIO";
+  if (t === "ARMS_INTERCEPTION" || t === "INTERDICTION" || t === "ARMS_SEIZURE") return "ARMS_INTERDICTION";
+  if (t === "IMF" || t === "IMF_MISSION" || t === "IMF_OUTREACH") return "IMF_CONTACT";
+  if (t === "CYBER" || t === "CYBER_ATTACK" || t === "CYBER_INCIDENT" || t === "CYBER_BREACH") return "CYBER_INTRUSION";
+  if (t === "ALLIANCE" || t === "ALLIANCE_SIGNALING" || t === "ALLY_SIGNAL") return "ALLIANCE_SIGNAL";
+  if (t === "INSURGENCY" || t === "INSURGENT" || t === "INSURGENT_STRIKE") return "INSURGENT_ATTACK";
+  return t;
+}, z.enum([
+  "SANCTIONS_WARNING",
+  "BORDER_INCIDENT",
+  "PROTESTS",
+  "LEAKED_AUDIO",
+  "ARMS_INTERDICTION",
+  "IMF_CONTACT",
+  "CYBER_INTRUSION",
+  "ALLIANCE_SIGNAL",
+  "INSURGENT_ATTACK",
+]));
+
 export const LlmGenerateTurnPackageSchema = z.object({
   briefing: z.object({
     text: z.string().min(60).max(8000),
@@ -94,17 +121,7 @@ export const LlmGenerateTurnPackageSchema = z.object({
   events: z
     .array(
       z.object({
-        type: z.enum([
-          "SANCTIONS_WARNING",
-          "BORDER_INCIDENT",
-          "PROTESTS",
-          "LEAKED_AUDIO",
-          "ARMS_INTERDICTION",
-          "IMF_CONTACT",
-          "CYBER_INTRUSION",
-          "ALLIANCE_SIGNAL",
-          "INSURGENT_ATTACK",
-        ]),
+        type: IncomingEventTypeSchema,
         actor: z.enum(["US", "CHINA", "RUSSIA", "EU", "REGIONAL_1", "REGIONAL_2", "DOMESTIC", "UNKNOWN"]),
         urgency: z.union([z.literal(1), z.literal(2), z.literal(3)]),
         visibleDescription: z.string().min(20).max(700),
@@ -153,17 +170,7 @@ export const LlmRewriteTurnSchema = z.object({
   // Optional: inject one extra dynamic event with bounded effects.
   injectedEvent: z
     .object({
-      type: z.enum([
-        "SANCTIONS_WARNING",
-        "BORDER_INCIDENT",
-        "PROTESTS",
-        "LEAKED_AUDIO",
-        "ARMS_INTERDICTION",
-        "IMF_CONTACT",
-        "CYBER_INTRUSION",
-        "ALLIANCE_SIGNAL",
-        "INSURGENT_ATTACK",
-      ]),
+      type: IncomingEventTypeSchema,
       actor: z.enum(["US", "CHINA", "RUSSIA", "EU", "REGIONAL_1", "REGIONAL_2", "DOMESTIC", "UNKNOWN"]),
       urgency: z.union([z.literal(1), z.literal(2), z.literal(3)]),
       visibleDescription: z.string().min(20).max(600),

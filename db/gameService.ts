@@ -19,6 +19,11 @@ import {
 } from "./llm";
 import { ensureDbSchema } from "./ensureDb";
 
+declare global {
+  // In-flight de-dupe for snapshot hydration (LLM turn-start + dossier).
+  var __twuoSnapshotHydrateInflight: Map<string, Promise<void>> | undefined;
+}
+
 function extractAfterSnapshot(playerSnapshot: unknown): GameSnapshot | null {
   if (!playerSnapshot || typeof playerSnapshot !== "object") return null;
   if ("after" in playerSnapshot) {
@@ -318,14 +323,9 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
     }
   }
 
-  // LLM-driven turn-start content when AI is ON (no deterministic fallback content).
-  let llmArtifact: unknown | undefined;
-  if (llmMode() === "ON") {
-    const pkg = await llmGenerateTurnPackage({ world, phase: "TURN_1" });
-    world.current.briefing = pkg.briefing;
-    world.current.incomingEvents = pkg.events;
-    llmArtifact = pkg.llmRaw;
-  }
+  // IMPORTANT: Do not block new-game creation on LLM calls.
+  // When AI is ON, we create the game immediately with empty turn-start content.
+  // The snapshot endpoint will fill turn-start briefing/events (and optionally dossier) on first load.
 
   const game = await prisma.game.create({
     data: {
@@ -340,25 +340,7 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
 
   const snapshot = getPlayerSnapshot(game.id, world, "ACTIVE");
 
-  // Optional LLM-generated dossier (player-facing country profile). No fast-mode fallback gating when AI is ON.
-  if (llmMode() === "ON") {
-    try {
-      const ind = snapshot.playerView.indicators;
-      const dossier = await llmGenerateCountryProfile({
-        world,
-        indicators: {
-          economicStability: ind.economicStability,
-          legitimacy: ind.legitimacy,
-          unrestLevel: ind.unrestLevel,
-          intelligenceClarity: ind.intelligenceClarity,
-        },
-      });
-      snapshot.countryProfile = dossier.countryProfile;
-      llmArtifact = llmArtifact ? { ...(llmArtifact as object), countryProfile: dossier.llmRaw } : { countryProfile: dossier.llmRaw };
-    } catch {
-      // Ignore: keep deterministic dossier.
-    }
-  }
+  // Note: dossier generation is also deferred to snapshot load in LLM mode to keep createGame fast.
 
   // Note: we intentionally do not generate an extra control-room view here.
   // The UI derives its feed/signals from `snapshot.playerView.*`, and we want to keep turn start fast.
@@ -368,23 +350,7 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
     data: { lastPlayerSnapshot: snapshot as unknown as object },
   });
 
-  if (llmArtifact) {
-    await prisma.turnLog.create({
-      data: {
-        gameId: game.id,
-        turnNumber: 0,
-        briefingText: world.current.briefing.text,
-        incomingEvents: world.current.incomingEvents as unknown as object,
-        playerActions: [] as unknown as object,
-        publicResolution: "INIT",
-        publicConsequences: [] as unknown as object,
-        signalsUnknown: [] as unknown as object,
-        playerSnapshot: { before: snapshot, after: snapshot } as unknown as object,
-        worldState: { before: world, after: world } as unknown as object,
-        failure: undefined,
-      },
-    });
-  }
+  // Note: no init turnLog artifact is created here; it will be created during real turns.
 
   return snapshot;
 }
@@ -413,7 +379,7 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
 export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   const game = await prisma.game.findUnique({ where: { id: gameId } });
   if (!game) throw new Error("Game not found");
-  const snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  let snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
   snapshot.llmMode = llmMode();
 
   // Backfill older snapshots (pre-dossier upgrade) so UI never crashes.
@@ -430,6 +396,85 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
       where: { id: gameId },
       data: { lastPlayerSnapshot: snapshot as unknown as object },
     });
+  }
+
+  // LLM-first hydration on read:
+  // If AI is ON and the game was created with LLM-driven turn-start content, fill it
+  // once (with in-flight de-dupe) when the client first loads the game.
+  if (snapshot.llmMode === "ON") {
+    const world = game.worldState as unknown as WorldState;
+    const needsTurnStart =
+      world.turnStartGenerator === "llm" &&
+      (!world.current?.briefing?.text || world.current.briefing.text.trim().length < 10 || world.current.incomingEvents.length === 0);
+    const needsDossier = snapshot.countryProfile?.generatedBy !== "llm";
+
+    if (needsTurnStart || needsDossier) {
+      const inflight = (globalThis.__twuoSnapshotHydrateInflight ??= new Map<string, Promise<void>>());
+      const key = `${gameId}:${world.turn}:hydrate`;
+      const existing = inflight.get(key);
+      const run =
+        existing ??
+        (async () => {
+          const [pkgRes, dossierRes] = await Promise.allSettled([
+            needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
+            needsDossier
+              ? llmGenerateCountryProfile({
+                  world,
+                  indicators: {
+                    economicStability: snapshot.playerView.indicators.economicStability,
+                    legitimacy: snapshot.playerView.indicators.legitimacy,
+                    unrestLevel: snapshot.playerView.indicators.unrestLevel,
+                    intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
+                  },
+                })
+              : Promise.resolve(null),
+          ]);
+
+          if (pkgRes.status === "fulfilled" && pkgRes.value) {
+            world.current.briefing = pkgRes.value.briefing;
+            world.current.incomingEvents = pkgRes.value.events;
+            snapshot.playerView.briefing = pkgRes.value.briefing;
+            snapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
+              id: e.id,
+              type: e.type,
+              actor: e.actor,
+              urgency: e.urgency,
+              visibleDescription: e.visibleDescription,
+              playerChoicesHints: e.playerChoicesHints,
+            }));
+          }
+
+          if (dossierRes.status === "fulfilled" && dossierRes.value) {
+            snapshot.countryProfile = dossierRes.value.countryProfile;
+          }
+
+          // Persist only if we actually improved anything.
+          if (
+            (pkgRes.status === "fulfilled" && pkgRes.value) ||
+            (dossierRes.status === "fulfilled" && dossierRes.value)
+          ) {
+            await prisma.game.update({
+              where: { id: gameId },
+              data: {
+                worldState: world as unknown as object,
+                lastPlayerSnapshot: snapshot as unknown as object,
+              },
+            });
+          }
+        })().finally(() => {
+          inflight.delete(key);
+        });
+
+      if (!existing) inflight.set(key, run);
+      await run;
+
+      // Re-read the snapshot after hydration so callers always get the persisted shape.
+      const refreshed = await prisma.game.findUnique({ where: { id: gameId } });
+      if (refreshed) {
+        snapshot = refreshed.lastPlayerSnapshot as unknown as GameSnapshot;
+        snapshot.llmMode = llmMode();
+      }
+    }
   }
 
   // Note: control-room view is optional; the current UI derives its feed/signals deterministically
