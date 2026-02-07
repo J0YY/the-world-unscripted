@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, ChevronLeft, ChevronRight, Dice5 } from "lucide-react";
+import { Send, Dice5 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { GameSnapshot } from "@/engine";
 
@@ -9,24 +9,12 @@ export function PromptConsole({
   gameId,
   llmMode,
   snapshot,
-  disabled,
   onSubmitDirective,
-  turnLabel,
-  canGoPrev,
-  canGoNext,
-  onPrev,
-  onNext,
 }: {
   gameId: string;
   llmMode?: "ON" | "OFF";
   snapshot: GameSnapshot;
-  disabled?: boolean;
   onSubmitDirective: (directive: string) => Promise<void>;
-  turnLabel: string;
-  canGoPrev: boolean;
-  canGoNext: boolean;
-  onPrev: () => void;
-  onNext: () => void;
 }) {
   const [directive, setDirective] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -34,7 +22,7 @@ export function PromptConsole({
     if (typeof window === "undefined") return 22;
     const raw = window.localStorage.getItem("twuo:commandDeckHeightVh");
     const n = raw ? Number(raw) : NaN;
-    return Number.isFinite(n) ? Math.max(16, Math.min(60, n)) : 22;
+    return Number.isFinite(n) ? Math.max(18, Math.min(60, n)) : 28;
   });
   const dragRef = useRef<{ startY: number; startVh: number; dragging: boolean } | null>(null);
 
@@ -55,7 +43,7 @@ export function PromptConsole({
   }, [heightVh]);
 
   async function submit() {
-    if (!directive.trim() || submitting || disabled) return;
+    if (!directive.trim() || submitting) return;
     setSubmitting(true);
     try {
       await onSubmitDirective(directive.trim());
@@ -101,7 +89,7 @@ export function PromptConsole({
       if (!dragRef.current?.dragging) return;
       const dy = ev.clientY - dragRef.current.startY;
       const deltaVh = (-dy / window.innerHeight) * 100;
-      const next = Math.max(16, Math.min(60, dragRef.current.startVh + deltaVh));
+        const next = Math.max(18, Math.min(60, dragRef.current.startVh + deltaVh));
       setHeightVh(Number(next.toFixed(2)));
     };
     const onUp = () => {
@@ -166,73 +154,44 @@ export function PromptConsole({
         </motion.div>
       ) : null}
       <div className="mx-auto h-full w-full max-w-[1800px] px-4 md:px-6 pt-5 pb-3 flex flex-col">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onPrev}
-              disabled={!canGoPrev}
-              className="inline-flex items-center justify-center rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] px-2 py-1 text-xs font-mono text-[var(--ds-gray-900)] disabled:opacity-40"
-              aria-label="Previous turn"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <div className="text-xs font-mono text-[var(--ds-gray-900)]">
-              <span className="uppercase opacity-70">Command Deck</span>{" "}
-              <span className="opacity-50">/</span> <span className="tabular-nums">{turnLabel}</span>
-              {disabled ? <span className="ml-2 text-[10px] uppercase opacity-60">(viewing history)</span> : null}
+        <div className="flex-1 min-h-0 flex flex-col">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Directive</div>
+          <textarea
+            value={directive}
+            onChange={(e) => setDirective(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") void submit();
+            }}
+            placeholder={placeholder}
+            rows={4}
+            className="mt-2 w-full flex-1 min-h-0 resize-none rounded bg-[var(--ds-background-100)] px-3 py-3 text-sm md:text-base leading-relaxed font-mono text-[var(--ds-gray-1000)] outline-none ring-1 ring-[var(--ds-gray-alpha-200)] placeholder:text-[var(--ds-gray-500)]"
+            disabled={submitting}
+          />
+          <div className="mt-2 flex items-center justify-between gap-2">
+            <div className="text-[10px] font-mono text-[var(--ds-gray-600)]">
+              <span className="opacity-80">{llmMode === "ON" ? "AI ON" : "AI OFF"}</span>
+              <span className="opacity-50"> · </span>
+              <span className="opacity-80">Cmd/Ctrl+Enter to submit</span>
             </div>
-            <button
-              type="button"
-              onClick={onNext}
-              disabled={!canGoNext}
-              className="inline-flex items-center justify-center rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] px-2 py-1 text-xs font-mono text-[var(--ds-gray-900)] disabled:opacity-40"
-              aria-label="Next turn"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-500)]">
-            {llmMode === "ON" ? "AI ON" : "AI OFF"}
-          </div>
-        </div>
-
-        <div className="mt-3 flex flex-col gap-3 flex-1 min-h-0">
-          <div className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] p-3 flex flex-col min-h-0 flex-1">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Directive</div>
-            <textarea
-              value={directive}
-              onChange={(e) => setDirective(e.target.value)}
-              placeholder={placeholder}
-              rows={4}
-              className="mt-2 w-full flex-1 min-h-0 resize-none rounded bg-[var(--ds-background-100)] px-3 py-3 text-sm md:text-base leading-relaxed font-mono text-[var(--ds-gray-1000)] outline-none ring-1 ring-[var(--ds-gray-alpha-200)] placeholder:text-[var(--ds-gray-500)]"
-              disabled={disabled || submitting}
-            />
-            <div className="mt-2 flex items-center justify-between gap-2">
-              <div className="text-[10px] font-mono text-[var(--ds-gray-600)]">
-                {disabled ? "History view is read-only." : "Enter to submit."}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => autofill()}
-                  disabled={disabled || submitting}
-                  className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-900)] disabled:opacity-40"
-                >
-                  <Dice5 className="h-3.5 w-3.5" />
-                  Autofill
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void submit()}
-                  disabled={disabled || submitting || !directive.trim()}
-                  className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-1000)] disabled:opacity-40"
-                >
-                  <Send className="h-3.5 w-3.5" />
-                  {submitting ? "Submitting…" : "End turn"}
-                </button>
-              </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => autofill()}
+                disabled={submitting}
+                className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-900)] disabled:opacity-40"
+              >
+                <Dice5 className="h-3.5 w-3.5" />
+                Autofill
+              </button>
+              <button
+                type="button"
+                onClick={() => void submit()}
+                disabled={submitting || !directive.trim()}
+                className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-1000)] disabled:opacity-40"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {submitting ? "Submitting…" : "End turn"}
+              </button>
             </div>
           </div>
         </div>

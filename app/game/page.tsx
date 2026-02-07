@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { GameSnapshot, TurnOutcome } from "@/engine";
-import { apiSnapshot, apiSubmitTurnWithDirective, apiTurnHistory } from "@/components/api";
+import { apiSnapshot, apiSubmitTurnWithDirective } from "@/components/api";
 import GlobalPressureFieldPage from "@/components/gpf/GlobalPressureFieldPage";
 import { PromptConsole } from "@/components/PromptConsole";
 import { getStoredGameId, setLastFailure, setLastOutcome } from "@/components/storage";
@@ -12,8 +12,6 @@ import AfterActionModal from "@/components/AfterActionModal";
 export default function GameControlRoomPage() {
   const router = useRouter();
   const [snap, setSnap] = useState<GameSnapshot | null>(null);
-  const [turns, setTurns] = useState<Array<{ turn: number; snapshot: GameSnapshot }>>([]);
-  const [turnIdx, setTurnIdx] = useState<number>(-1);
   const [error, setError] = useState<string | null>(null);
   const [isFadingIn, setIsFadingIn] = useState(true);
   const [afterActionOpen, setAfterActionOpen] = useState(false);
@@ -32,18 +30,8 @@ export default function GameControlRoomPage() {
       router.push("/");
       return;
     }
-    Promise.all([apiSnapshot(gameId), apiTurnHistory(gameId)])
-      .then(([latest, hist]) => {
-        const all = hist.turns ?? [];
-        // Ensure latest snapshot is present.
-        const byTurn = new Map<number, GameSnapshot>(all.map((t) => [t.turn, t.snapshot]));
-        byTurn.set(latest.turn, latest);
-        const merged = Array.from(byTurn.entries())
-          .sort((a, b) => a[0] - b[0])
-          .map(([turn, snapshot]) => ({ turn, snapshot }));
-        setTurns(merged);
-        const idx = merged.findIndex((t) => t.turn === latest.turn);
-        setTurnIdx(idx >= 0 ? idx : merged.length - 1);
+    apiSnapshot(gameId)
+      .then((latest) => {
         setSnap(latest);
         if (latest.status === "FAILED") router.push("/failure");
       })
@@ -53,13 +41,6 @@ export default function GameControlRoomPage() {
   const title = useMemo(() => (snap ? `${snap.countryProfile.name} — Turn ${snap.turn}` : "Control room"), [snap]);
 
   const gameId = useMemo(() => getStoredGameId(), []);
-
-  function viewTurnAt(nextIdx: number) {
-    const t = turns[nextIdx];
-    if (!t) return;
-    setTurnIdx(nextIdx);
-    setSnap(t.snapshot);
-  }
 
   async function onSubmitDirective(directive: string) {
     const gameId = getStoredGameId();
@@ -77,15 +58,6 @@ export default function GameControlRoomPage() {
 
       const next = outcome.nextSnapshot;
       setSnap(next);
-      setTurns((prev) => {
-        const byTurn = new Map<number, GameSnapshot>(prev.map((t) => [t.turn, t.snapshot]));
-        byTurn.set(next.turn, next);
-        const merged = Array.from(byTurn.entries())
-          .sort((a, b) => a[0] - b[0])
-          .map(([turn, snapshot]) => ({ turn, snapshot }));
-        setTurnIdx(merged.findIndex((t) => t.turn === next.turn));
-        return merged;
-      });
     }
   }
 
@@ -120,13 +92,7 @@ export default function GameControlRoomPage() {
           gameId={gameId}
           llmMode={snap.llmMode}
           snapshot={snap}
-          disabled={turnIdx >= 0 && turnIdx < turns.length - 1}
           onSubmitDirective={onSubmitDirective}
-          turnLabel={`Turn ${snap.turn}`}
-          canGoPrev={turnIdx > 0}
-          canGoNext={turnIdx >= 0 && turnIdx < turns.length - 1}
-          onPrev={() => viewTurnAt(Math.max(0, turnIdx - 1))}
-          onNext={() => viewTurnAt(Math.min(turns.length - 1, turnIdx + 1))}
         />
       ) : null}
 
