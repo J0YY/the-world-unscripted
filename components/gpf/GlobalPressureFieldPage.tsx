@@ -30,10 +30,12 @@ export default function GlobalPressureFieldPage({
   snapshot,
   rightSlot,
   bottomSlot,
+  onModeChange,
 }: {
   snapshot: GameSnapshot;
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
+  onModeChange?: (mode: MapMode) => void;
 }) {
   const router = useRouter();
   const [mode, setMode] = useState<MapMode>("location");
@@ -107,6 +109,11 @@ export default function GlobalPressureFieldPage({
 
   const derivedMode = mode === "world-events" ? "world-events" : "relationship";
   const derived = useMemo(() => deriveGpf(snapshot, derivedMode), [snapshot, derivedMode]);
+
+  function handleModeChange(nextMode: MapMode) {
+    setMode(nextMode);
+    onModeChange?.(nextMode);
+  }
 
   const powerModel = useMemo(() => {
     const clamp = (n: number) => Math.max(0, Math.min(100, n));
@@ -351,7 +358,7 @@ export default function GlobalPressureFieldPage({
         <div className="flex-1 min-w-0" id="gpf-map">
           <LayerToggle
             mode={mode}
-            onModeChange={setMode}
+            onModeChange={handleModeChange}
             intelFog={intelFog}
             onIntelFogChange={setIntelFog}
             showExposure={showExposure}

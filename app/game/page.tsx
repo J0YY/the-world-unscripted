@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { GameSnapshot, TurnOutcome } from "@/engine";
+import type { MapMode } from "@/components/gpf/types";
 import { apiResolutionReport, apiSnapshot, apiSubmitTurnWithDirective } from "@/components/api";
 import GlobalPressureFieldPage from "@/components/gpf/GlobalPressureFieldPage";
 import { PromptConsole } from "@/components/PromptConsole";
@@ -30,7 +31,9 @@ export default function GameControlRoomPage() {
   const [afterActionOpen, setAfterActionOpen] = useState(false);
   const [afterActionOutcome, setAfterActionOutcome] = useState<TurnOutcome | null>(null);
   const [afterActionDirective, setAfterActionDirective] = useState<string>("");
+  const [alertOpen, setAlertOpen] = useState(false);
   const hydrationPollTokenRef = useRef(0);
+  const lastWorldEventsAlertWindowRef = useRef<number | null>(null);
 
   async function pollHydrationUntilReady(
     gameId: string,
@@ -102,6 +105,22 @@ export default function GameControlRoomPage() {
     };
   }, [router]);
 
+  const topHeadline = useMemo(() => {
+    const headline = snap?.playerView?.briefing?.headlines?.[0];
+    return typeof headline === "string" ? headline.trim() : "";
+  }, [snap]);
+
+  const alertWindowKey = useMemo(() => {
+    return snap?.gameId ? `twuo:worldEventsAlertWindow:${snap.gameId}` : null;
+  }, [snap?.gameId]);
+
+  useEffect(() => {
+    if (!alertWindowKey || typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(alertWindowKey);
+    const parsed = raw ? Number(raw) : NaN;
+    lastWorldEventsAlertWindowRef.current = Number.isFinite(parsed) ? parsed : null;
+  }, [alertWindowKey]);
+
   const title = useMemo(() => (snap ? `${snap.countryProfile.name} — Turn ${snap.turn}` : "Control room"), [snap]);
 
   const gameId = useMemo(() => getStoredGameId(), []);
@@ -150,6 +169,19 @@ export default function GameControlRoomPage() {
     }
   }
 
+  function handleGpfModeChange(nextMode: MapMode) {
+    if (nextMode !== "world-events") return;
+    if (!snap || !topHeadline) return;
+    if (snap.turn < 3) return;
+    const windowIndex = Math.floor((snap.turn - 1) / 3);
+    if (lastWorldEventsAlertWindowRef.current === windowIndex) return;
+    lastWorldEventsAlertWindowRef.current = windowIndex;
+    if (alertWindowKey && typeof window !== "undefined") {
+      window.localStorage.setItem(alertWindowKey, String(windowIndex));
+    }
+    setAlertOpen(true);
+  }
+
   if (error) return <Shell title={title}>{error}</Shell>;
   if (!snap) return <Shell title={title}>Loading…</Shell>;
 
@@ -158,6 +190,7 @@ export default function GameControlRoomPage() {
       <Shell title={title} llmMode={snap.llmMode}>
         <GlobalPressureFieldPage
           snapshot={snap}
+          onModeChange={handleGpfModeChange}
           bottomSlot={
             // Reserve space so the sticky prompt console doesn't cover content.
             <div style={{ height: "var(--prompt-console-h, 22vh)" }} />
@@ -183,6 +216,60 @@ export default function GameControlRoomPage() {
           snapshot={snap}
           onSubmitDirective={onSubmitDirective}
         />
+      ) : null}
+
+      {snap && topHeadline && alertOpen ? (
+        <div className="fixed inset-0 z-[95] flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/85 to-black/90 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-red-500/80 bg-red-950/70 text-white shadow-[0_0_40px_rgba(239,68,68,0.35)]"
+            style={{
+              backgroundImage:
+                "repeating-linear-gradient(135deg, rgba(239,68,68,0.25) 0px, rgba(239,68,68,0.25) 10px, rgba(0,0,0,0.0) 10px, rgba(0,0,0,0.0) 22px)",
+            }}
+            role="alertdialog"
+            aria-live="assertive"
+            aria-label="Critical intelligence alert"
+          >
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-red-600 via-red-300 to-red-600 animate-pulse" />
+            <div className="flex items-start justify-between gap-3 border-b border-red-400/50 bg-black/70 px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.4em] text-red-200/90">
+                  <span className="h-2.5 w-2.5 rounded-full bg-red-400 shadow-[0_0_12px_rgba(239,68,68,0.9)] animate-pulse" />
+                  Critical Alert
+                </div>
+                <div className="mt-1 text-lg font-semibold text-red-100">CLASSIFIED INFORMATION</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAlertOpen(false)}
+                className="rounded-full border border-red-300/60 bg-red-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.25em] text-red-100 hover:bg-red-500/20"
+                aria-label="Dismiss alert"
+              >
+                Dismiss
+              </button>
+            </div>
+
+            <div className="px-5 py-4">
+              <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.25em] text-red-100/80">
+                <span className="rounded border border-red-300/60 bg-red-500/20 px-2 py-1">Severity 2</span>
+                <span className="rounded border border-red-300/60 bg-red-500/20 px-2 py-1">Priority: Immediate</span>
+              </div>
+
+              <div className="mt-4 rounded-lg border border-red-400/40 bg-black/60 p-4 shadow-[inset_0_0_20px_rgba(239,68,68,0.15)]">
+                <div className="text-[10px] uppercase tracking-[0.35em] text-red-100/80">Top Briefing</div>
+                <div className="mt-2 text-base leading-relaxed text-white">{topHeadline}</div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-red-100/80">
+                <div>
+                  FROM: {snap.countryProfile.name.toUpperCase()} INTELLIGENCE DIRECTORATE
+                </div>
+                <div>TO: NATIONAL SECURITY COUNCIL</div>
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       <div
