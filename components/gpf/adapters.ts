@@ -186,6 +186,85 @@ function deriveCountryColors(snapshot: GameSnapshot, mode: "relationship" | "wor
     "NZ": { lat: -40.90, lon: 174.89 },
   };
 
+  const normalizeCountryName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const countryNameToCode: Record<string, string> = {
+    "germany": "DE",
+    "france": "FR",
+    "united kingdom": "GB",
+    "uk": "GB",
+    "britain": "GB",
+    "great britain": "GB",
+    "russia": "RU",
+    "russian federation": "RU",
+    "ukraine": "UA",
+    "poland": "PL",
+    "italy": "IT",
+    "spain": "ES",
+    "sweden": "SE",
+    "norway": "NO",
+    "belgium": "BE",
+    "netherlands": "NL",
+
+    "united states": "US",
+    "united states of america": "US",
+    "usa": "US",
+    "canada": "CA",
+    "mexico": "MX",
+    "brazil": "BR",
+    "argentina": "AR",
+    "chile": "CL",
+
+    "china": "CN",
+    "india": "IN",
+    "japan": "JP",
+    "south korea": "KR",
+    "republic of korea": "KR",
+    "korea": "KR",
+    "indonesia": "ID",
+    "thailand": "TH",
+    "vietnam": "VN",
+    "pakistan": "PK",
+    "singapore": "SG",
+    "malaysia": "MY",
+    "philippines": "PH",
+
+    "saudi arabia": "SA",
+    "uae": "AE",
+    "united arab emirates": "AE",
+    "iran": "IR",
+    "iraq": "IQ",
+    "israel": "IL",
+    "egypt": "EG",
+    "turkey": "TR",
+    "kuwait": "KW",
+    "jordan": "JO",
+    "lebanon": "LB",
+
+    "south africa": "ZA",
+    "nigeria": "NG",
+    "ethiopia": "ET",
+    "kenya": "KE",
+    "morocco": "MA",
+    "tunisia": "TN",
+    "uganda": "UG",
+    "ghana": "GH",
+    "mali": "ML",
+    "democratic republic of the congo": "CD",
+    "dr congo": "CD",
+    "congo kinshasa": "CD",
+    "angola": "AO",
+    "senegal": "SN",
+
+    "australia": "AU",
+    "new zealand": "NZ",
+  };
+
+  const resolveCountryCode = (name: string) => {
+    const trimmed = name.trim();
+    if (trimmed.length === 2 && countryLocationMap[trimmed.toUpperCase()]) return trimmed.toUpperCase();
+    return countryNameToCode[normalizeCountryName(trimmed)] ?? null;
+  };
+
   const ind = snapshot.playerView.indicators;
   const cred = ind.internationalCredibility.estimatedValue;
   const econ = ind.economicStability.estimatedValue;
@@ -316,9 +395,32 @@ function deriveCountryColors(snapshot: GameSnapshot, mode: "relationship" | "wor
     });
   }
 
+  // If the player's country is fictional, infer its approximate location
+  // from its listed neighbors and add a special marker so the map can
+  // highlight pixels near that inferred point (client will look for
+  // a countryCode of "__PLAYER__").
+  // This ALWAYS runs in relationship mode, independent of relationshipIndex.
+  if (mode === "relationship") {
+    const neighbors = snapshot.countryProfile.neighbors || [];
+    const neighborCodes = neighbors.map((n) => resolveCountryCode(n)).filter(Boolean) as string[];
+    const locs = neighborCodes.map((code) => countryLocationMap[code]).filter(Boolean) as { lat: number; lon: number }[];
+    if (locs.length > 0) {
+      const avg = locs.reduce((acc, cur) => ({ lat: acc.lat + cur.lat, lon: acc.lon + cur.lon }), { lat: 0, lon: 0 });
+      const lat = avg.lat / locs.length;
+      const lon = avg.lon / locs.length;
+      colors.push({
+        countryCode: "__PLAYER__",
+        lat,
+        lon,
+        intensity: "high",
+        color: "#ff66b2",
+      });
+    }
+  }
+
   return colors;
 }
-
+ 
 function deriveHotspots(snapshot: GameSnapshot): UiHotspot[] {
   const events = snapshot.playerView.incomingEvents;
   const ind = snapshot.playerView.indicators;
