@@ -57,6 +57,41 @@ function DecryptionMinigame({
 
   const [status, setStatus] = useState<"playing" | "fail" | "success">("playing");
 
+  // --- Carrier lock visual (cosmetic) ---
+  const phaseRef = useRef(0);
+  const [carrierD, setCarrierD] = useState<string>("");
+
+  const makeCarrierPath = useCallback((phase: number, amp: number) => {
+    const W = 360;
+    const H = 32;
+    const mid = H / 2;
+    const freq = 2.2 + signal.intensity * 0.8;
+    const steps = 48;
+    const pts: string[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const x = t * W;
+      const y = mid + Math.sin(t * Math.PI * 2 * freq + phase) * amp;
+      pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    }
+    return `M ${pts[0]} ` + pts.slice(1).map((p) => `L ${p}`).join(" ");
+  }, [signal.intensity]);
+
+  useEffect(() => {
+    const amp = status === "playing" ? 7 + signal.intensity * 2.5 : status === "success" ? 0.01 : 0.01;
+    // Initialize path immediately.
+    setCarrierD(makeCarrierPath(phaseRef.current, amp));
+    if (status !== "playing") return;
+    let raf = 0;
+    const tick = () => {
+      phaseRef.current += 0.14 + signal.intensity * 0.05;
+      setCarrierD(makeCarrierPath(phaseRef.current, amp));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [makeCarrierPath, signal.intensity, status]);
+
   // --- Oscillator Logic ---
   const animateOscillator = useCallback(() => {
     setCursorPos((prev) => {
@@ -246,6 +281,23 @@ function DecryptionMinigame({
 
         {/* Game Area */}
         <div className="mb-4 bg-gray-900 rounded border border-gray-800 relative h-48 flex items-center justify-center overflow-hidden">
+          {/* Carrier wave / lock line */}
+          <div className="pointer-events-none absolute left-0 right-0 top-0 h-10 opacity-80">
+            <svg viewBox="0 0 360 32" className="w-full h-full">
+              <path
+                d={carrierD}
+                fill="none"
+                stroke={status === "success" ? config.color : "rgba(255,255,255,0.35)"}
+                strokeWidth={status === "success" ? 2.2 : 1.4}
+                style={{
+                  filter: status === "success" ? `drop-shadow(0 0 10px ${config.color}55)` : "drop-shadow(0 0 6px rgba(255,255,255,0.18))",
+                }}
+              />
+            </svg>
+            <div className="absolute right-3 top-2 text-[10px] font-mono uppercase tracking-[0.35em] text-white/45">
+              {status === "success" ? "CARRIER LOCK" : "CARRIER"}
+            </div>
+          </div>
           
           {/* Game: Oscillator */}
           {gameMode === "oscillator" && (

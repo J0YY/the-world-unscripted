@@ -49,22 +49,10 @@ export function PromptConsole({
   async function submit() {
     if (!directive.trim() || submitting) return;
     setSubmitting(true);
-    setProgress({ completed: 0, total: 2, label: "Submitting…" });
-    let done = false;
+    setProgress({ completed: 0, total: 3, label: "Submitting…" });
     try {
-      await onSubmitDirective(directive.trim(), (p) => {
-        setProgress(p);
-        if (p.total > 0 && p.completed >= p.total) done = true;
-      });
+      await onSubmitDirective(directive.trim(), (p) => setProgress(p));
       setDirective("");
-
-      // Keep the overlay up briefly until progress reaches completion,
-      // since some work continues asynchronously (hydration polling).
-      const startedAt = Date.now();
-      const maxWaitMs = 18_000;
-      while (!done && Date.now() - startedAt < maxWaitMs) {
-        await new Promise((r) => setTimeout(r, 120));
-      }
     } finally {
       setSubmitting(false);
       setProgress(null);

@@ -15,7 +15,11 @@ function needsHydration(s: GameSnapshot | null): boolean {
   const briefing = s.playerView?.briefing;
   const incoming = s.playerView?.incomingEvents ?? [];
   const headlines = Array.isArray(briefing?.headlines) ? briefing.headlines : [];
-  return incoming.length === 0 || headlines.length === 0;
+  const intel = Array.isArray(briefing?.intelBriefs) ? briefing.intelBriefs : [];
+  const dip = Array.isArray(briefing?.diplomaticMessages) ? briefing.diplomaticMessages : [];
+  const rum = Array.isArray(briefing?.domesticRumors) ? briefing.domesticRumors : [];
+  // Slim briefing target: 2 intercepts + 1 cable + 2 headlines + 1 rumor, plus events.
+  return incoming.length === 0 || headlines.length < 2 || intel.length < 2 || dip.length < 1 || rum.length < 1;
 }
 
 export default function GameControlRoomPage() {
@@ -28,27 +32,42 @@ export default function GameControlRoomPage() {
   const [afterActionDirective, setAfterActionDirective] = useState<string>("");
   const hydrationPollTokenRef = useRef(0);
 
-  async function pollHydrationUntilReady(gameId: string) {
+  async function pollHydrationUntilReady(
+    gameId: string,
+    opts?: {
+      maxMs?: number;
+      delaysMs?: number[];
+      onFirst200?: () => void;
+    },
+  ): Promise<GameSnapshot | null> {
     const token = ++hydrationPollTokenRef.current;
-    const maxMs = 45_000;
+    const maxMs = typeof opts?.maxMs === "number" && Number.isFinite(opts.maxMs) ? opts.maxMs : 45_000;
     const startedAt = Date.now();
-    const delaysMs = [900, 1200, 1600, 2200, 3000, 4200, 6000, 8500, 10_000];
+    const delaysMs = Array.isArray(opts?.delaysMs) && opts!.delaysMs.length ? opts!.delaysMs : [900, 1200, 1600, 2200, 3000, 4200, 6000, 8500, 10_000];
+    let didAny200 = false;
+    let last: GameSnapshot | null = null;
 
     // Staggered poll: quick early checks, then back off hard.
     for (let i = 0; Date.now() - startedAt < maxMs; i++) {
-      if (hydrationPollTokenRef.current !== token) return;
+      if (hydrationPollTokenRef.current !== token) return last;
 
       const delay = delaysMs[Math.min(i, delaysMs.length - 1)] ?? 2000;
       const extraHiddenDelay = typeof document !== "undefined" && document.hidden ? 6000 : 0;
       await new Promise((r) => setTimeout(r, delay + extraHiddenDelay));
 
-      if (hydrationPollTokenRef.current !== token) return;
+      if (hydrationPollTokenRef.current !== token) return last;
 
       const s = await apiSnapshot(gameId);
-      if (hydrationPollTokenRef.current !== token) return;
+      if (hydrationPollTokenRef.current !== token) return last;
       setSnap(s);
+      last = s;
+      if (!didAny200) {
+        didAny200 = true;
+        opts?.onFirst200?.();
+      }
       if (!needsHydration(s)) break;
     }
+    return last;
   }
 
   useEffect(() => {
@@ -93,9 +112,9 @@ export default function GameControlRoomPage() {
   ) {
     const gameId = getStoredGameId();
     if (!gameId) return;
-    onProgress?.({ completed: 0, total: 2, label: "Submitting directive…" });
+    onProgress?.({ completed: 0, total: 3, label: "Submitting directive…" });
     const outcome = await apiSubmitTurnWithDirective(gameId, [], directive.trim());
-    onProgress?.({ completed: 1, total: 2, label: "Advancing turn…" });
+    onProgress?.({ completed: 1, total: 3, label: "Turn resolved." });
     setLastOutcome(outcome);
     if (outcome.failure) {
       setLastFailure(outcome.failure);
@@ -109,13 +128,24 @@ export default function GameControlRoomPage() {
       const next = outcome.nextSnapshot;
       setSnap(next);
 
-      // Poll snapshot briefly to pick up hydrated events/briefing (non-blocking server).
+      // Poll snapshot briefly to pick up hydrated events/briefing (bounded so UI never "hangs").
       if (needsHydration(next)) {
-        void pollHydrationUntilReady(gameId)
-          .catch(() => {})
-          .finally(() => onProgress?.({ completed: 2, total: 2, label: "Brief ready." }));
+        onProgress?.({ completed: 1, total: 3, label: "Hydrating brief…" });
+        const last = await pollHydrationUntilReady(gameId, {
+          maxMs: 14_000,
+          delaysMs: [650, 850, 1100, 1400, 1800, 2400, 3200],
+          onFirst200: () => onProgress?.({ completed: 2, total: 3, label: "Brief arriving…" }),
+        }).catch(() => null);
+        // Whether or not hydration finished, don't leave the overlay stuck.
+        const hydrated = !!last && !needsHydration(last);
+        onProgress?.({ completed: 3, total: 3, label: hydrated ? "Brief ready." : "Continuing in background…" });
+        // If we timed out before hydration completed, keep polling slowly in the background
+        // so the UI still updates once the LLM finishes (but without spamming requests).
+        if (!hydrated) {
+          void pollHydrationUntilReady(gameId, { maxMs: 45_000, delaysMs: [6000, 9000, 12_000, 15_000] }).catch(() => {});
+        }
       } else {
-        onProgress?.({ completed: 2, total: 2, label: "Brief ready." });
+        onProgress?.({ completed: 3, total: 3, label: "Brief ready." });
       }
     }
   }

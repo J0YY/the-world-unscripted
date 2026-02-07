@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GameSnapshot } from "@/engine";
 import type { MapMode } from "./types";
 import { deriveGpf } from "./adapters";
 import WorldPressure from "./WorldPressure";
+import { AnimatePresence, motion } from "framer-motion";
 import HotspotList from "./HotspotList";
 import TurnDeltasPanel from "./TurnDeltasPanel";
 import LayerToggle from "./LayerToggle";
@@ -36,23 +37,38 @@ export default function GlobalPressureFieldPage({
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
   const [leftTab, setLeftTab] = useState<"intel" | "diplomacy">("intel");
+  const bootTurnRef = useRef<number>(snapshot.turn);
+  const [bootKey, setBootKey] = useState(0);
+  const [bootActive, setBootActive] = useState(false);
+
+  useEffect(() => {
+    if (bootTurnRef.current === snapshot.turn) return;
+    bootTurnRef.current = snapshot.turn;
+    setBootKey((k) => k + 1);
+    setBootActive(true);
+    const t = setTimeout(() => setBootActive(false), 560);
+    return () => clearTimeout(t);
+  }, [snapshot.turn]);
 
   const derivedMode = mode === "world-events" ? "world-events" : "relationship";
   const derived = useMemo(() => deriveGpf(snapshot, derivedMode), [snapshot, derivedMode]);
 
-  const powerIndex = useMemo(() => {
+  const powerModel = useMemo(() => {
     const clamp = (n: number) => Math.max(0, Math.min(100, n));
     const est = (m: { estimatedValue: number } | undefined) => clamp(Number.isFinite(m?.estimatedValue) ? m!.estimatedValue : 50);
     const inv = (x: number) => 100 - clamp(x);
 
     const ind = snapshot.playerView.indicators;
+    const econ = est(ind.economicStability);
+    const legitimacy = est(ind.legitimacy);
+    const cred = est(ind.internationalCredibility);
     const domestic =
-      0.18 * est(ind.economicStability) +
-      0.14 * est(ind.legitimacy) +
+      0.18 * econ +
+      0.14 * legitimacy +
       0.10 * est(ind.publicApproval) +
       0.10 * est(ind.eliteCohesion) +
       0.08 * est(ind.militaryLoyalty) +
-      0.12 * est(ind.internationalCredibility) +
+      0.12 * cred +
       0.12 * est(ind.sovereigntyIntegrity) +
       0.06 * est(ind.intelligenceClarity) +
       0.05 * inv(est(ind.inflationPressure)) +
@@ -62,12 +78,81 @@ export default function GlobalPressureFieldPage({
     const stances = Array.isArray(snapshot.diplomacy?.nations) ? snapshot.diplomacy!.nations.map((n) => clamp(n.stance)) : [];
     const influence = stances.length ? stances.reduce((a, b) => a + b, 0) / stances.length : 50;
 
-    return clamp(Math.round(domestic * 0.8 + influence * 0.2));
+    const powerIndex = clamp(Math.round(domestic * 0.8 + influence * 0.2));
+    return {
+      powerIndex,
+      breakdown: {
+        economicStability: econ,
+        legitimacy,
+        internationalCredibility: cred,
+        influence: clamp(Math.round(influence)),
+        mix: { domestic: 0.8, influence: 0.2 },
+      },
+    };
   }, [snapshot]);
 
   return (
     <main className="font-mono min-h-screen max-w-[1800px] mx-auto relative overflow-hidden px-4 md:px-6 pt-6 md:pt-8 pb-8">
-      <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <AnimatePresence initial={false}>
+        {bootActive ? (
+          <motion.div
+            key={bootKey}
+            className="pointer-events-none absolute inset-0 z-[80] overflow-hidden"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            aria-hidden="true"
+          >
+            <div
+              className="absolute inset-0 opacity-[0.12] mix-blend-overlay"
+              style={{
+                backgroundImage:
+                  "repeating-linear-gradient(180deg, rgba(255,255,255,0.10) 0px, rgba(255,255,255,0.10) 1px, transparent 2px, transparent 5px)",
+              }}
+            />
+            <motion.div
+              className="absolute left-0 right-0 h-16 bg-gradient-to-b from-transparent via-white/15 to-transparent mix-blend-overlay"
+              initial={{ y: -90 }}
+              animate={{ y: "110%" }}
+              transition={{ duration: 0.55, ease: "easeInOut" }}
+            />
+            <motion.div
+              className="absolute inset-0 bg-white/10"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0.18, 0.05, 0] }}
+              transition={{ duration: 0.55, times: [0, 0.14, 0.45, 1] }}
+            />
+            <motion.div
+              className="absolute left-4 top-4 text-[10px] font-mono uppercase tracking-[0.3em] text-white/55"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: [0, 1, 0.6, 0], y: [-4, 0, 0, 2] }}
+              transition={{ duration: 0.55, times: [0, 0.18, 0.6, 1] }}
+            >
+              SYSTEM HANDSHAKE
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <motion.div
+        initial={false}
+        animate={
+          bootActive
+            ? {
+                opacity: [0.75, 1, 0.86, 1],
+                filter: [
+                  "brightness(1.25) contrast(1.15)",
+                  "brightness(1) contrast(1)",
+                  "brightness(1.12) contrast(1.05)",
+                  "brightness(1) contrast(1)",
+                ],
+              }
+            : { opacity: 1, filter: "brightness(1) contrast(1)" }
+        }
+        transition={{ duration: 0.55, times: [0, 0.22, 0.55, 1], ease: "easeOut" }}
+      >
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl md:text-2xl font-mono font-medium text-[var(--ds-gray-1000)] m-0">
@@ -144,14 +229,15 @@ export default function GlobalPressureFieldPage({
             {derived.periodLabel}
           </div>
         </div>
-      </header>
+        </header>
 
-      <div className="flex flex-col lg:flex-row gap-4">
+        <div className="flex flex-col lg:flex-row gap-4">
         <div className="w-full lg:w-64 xl:w-72 flex-shrink-0 space-y-6">
           <div id="gpf-pressure">
             <WorldPressure
               pressureIndex={derived.pressureIndex}
-              powerIndex={powerIndex}
+              powerIndex={powerModel.powerIndex}
+              powerBreakdown={powerModel.breakdown}
               narrativeGravity={derived.narrativeGravity}
               systemStrain={derived.systemStrain}
             />
@@ -216,15 +302,16 @@ export default function GlobalPressureFieldPage({
           </div>
           {rightSlot}
         </div>
-      </div>
+        </div>
 
-      {bottomSlot ? <div className="mt-6">{bottomSlot}</div> : null}
+        {bottomSlot ? <div className="mt-6">{bottomSlot}</div> : null}
 
-      <footer className="mt-6 pt-4 border-t border-[var(--ds-gray-alpha-200)]">
+        <footer className="mt-6 pt-4 border-t border-[var(--ds-gray-alpha-200)]">
         <p className="text-[10px] md:text-xs text-[var(--ds-gray-500)] font-mono m-0 text-center">
           This view reflects perceived pressure. Ground truth is not shown.
         </p>
-      </footer>
+        </footer>
+      </motion.div>
     </main>
   );
 }
