@@ -14,6 +14,11 @@ import {
   llmGenerateDiplomacy,
   llmGenerateResolution,
   llmGenerateWorldGenScenario,
+  llmGenerateBriefingDiplomaticMessagesOnly,
+  llmGenerateBriefingDomesticRumorsOnly,
+  llmGenerateBriefingHeadlinesOnly,
+  llmGenerateBriefingIntelBriefsOnly,
+  llmGenerateTurnEventsOnly,
   llmGenerateTurnPackage,
   llmMode,
   llmParsePlayerDirective,
@@ -58,9 +63,15 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
   if (llmMode() !== "ON") return;
 
   const { gameId, world, snapshot } = args;
+  const briefingReady =
+    !!world.current?.briefing &&
+    Array.isArray(world.current.briefing.headlines) &&
+    world.current.briefing.headlines.length > 0 &&
+    Array.isArray(world.current.briefing.intelBriefs) &&
+    world.current.briefing.intelBriefs.length > 0;
   const needsTurnStart =
     world.turnStartGenerator === "llm" &&
-    (!world.current?.briefing?.text || world.current.briefing.text.trim().length < 10 || world.current.incomingEvents.length === 0);
+    (!briefingReady || world.current.incomingEvents.length === 0);
   const needsDossier = snapshot.countryProfile?.generatedBy !== "llm";
   const needsDiplomacy = !snapshot.diplomacy || !Array.isArray(snapshot.diplomacy.nations) || snapshot.diplomacy.nations.length === 0;
   if (!needsTurnStart && !needsDossier && !needsDiplomacy) return;
@@ -74,54 +85,132 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
   }
 
   const run = (async () => {
-    // Generate core turn-start content concurrently.
-    // Diplomacy generation is intentionally non-blocking (handled separately).
-    const [pkgRes, dossierRes] = await Promise.allSettled([
-      needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
-      needsDossier
-        ? llmGenerateCountryProfile({
-            world,
-            indicators: {
-              economicStability: snapshot.playerView.indicators.economicStability,
-              legitimacy: snapshot.playerView.indicators.legitimacy,
-              unrestLevel: snapshot.playerView.indicators.unrestLevel,
-              intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
+    // Persist partial turn-start content as it becomes available, so the UI can
+    // start rendering the feed before *everything* completes.
+    let persistQueue = Promise.resolve();
+    const enqueuePersist = () => {
+      persistQueue = persistQueue
+        .then(async () => {
+          await prisma.game.update({
+            where: { id: gameId },
+            data: {
+              worldState: world as unknown as object,
+              lastPlayerSnapshot: snapshot as unknown as object,
             },
+          });
+        })
+        .catch(() => {});
+      return persistQueue;
+    };
+
+    const mergeUnique = (prev: string[], next: string[]) => {
+      const out: string[] = [];
+      const seen = new Set<string>();
+      for (const s of [...prev, ...next]) {
+        const k = typeof s === "string" ? s.trim() : "";
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(k);
+      }
+      return out;
+    };
+
+    const mergeIntel = (
+      prev: Array<{ text: string; confidence: "low" | "med" | "high" }>,
+      next: Array<{ text: string; confidence: "low" | "med" | "high" }>,
+    ) => {
+      const out: Array<{ text: string; confidence: "low" | "med" | "high" }> = [];
+      const seen = new Set<string>();
+      for (const it of [...prev, ...next]) {
+        const t = typeof it?.text === "string" ? it.text.trim() : "";
+        if (!t || seen.has(t)) continue;
+        seen.add(t);
+        out.push({ text: t, confidence: it.confidence });
+      }
+      return out;
+    };
+
+    const phase = world.turn === 1 ? ("TURN_1" as const) : ("TURN_N" as const);
+    const sectionArgs = { world, phase };
+
+    const tasks: Array<Promise<void>> = [];
+
+    if (needsTurnStart) {
+      tasks.push(
+        llmGenerateBriefingIntelBriefsOnly(sectionArgs)
+          .then((r) => {
+            world.current.briefing.intelBriefs = mergeIntel(world.current.briefing.intelBriefs, r.intelBriefs);
+            snapshot.playerView.briefing.intelBriefs = world.current.briefing.intelBriefs;
+            return enqueuePersist();
           })
-        : Promise.resolve(null),
-    ]);
-
-    if (pkgRes.status === "fulfilled" && pkgRes.value) {
-      world.current.briefing = pkgRes.value.briefing;
-      world.current.incomingEvents = pkgRes.value.events;
-      snapshot.playerView.briefing = pkgRes.value.briefing;
-      snapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
-        id: e.id,
-        type: e.type,
-        actor: e.actor,
-        urgency: e.urgency,
-        visibleDescription: e.visibleDescription,
-        playerChoicesHints: e.playerChoicesHints,
-      }));
+          .catch(() => {}),
+      );
+      tasks.push(
+        llmGenerateBriefingDiplomaticMessagesOnly(sectionArgs)
+          .then((r) => {
+            world.current.briefing.diplomaticMessages = mergeUnique(world.current.briefing.diplomaticMessages, r.diplomaticMessages);
+            snapshot.playerView.briefing.diplomaticMessages = world.current.briefing.diplomaticMessages;
+            return enqueuePersist();
+          })
+          .catch(() => {}),
+      );
+      tasks.push(
+        llmGenerateBriefingHeadlinesOnly(sectionArgs)
+          .then((r) => {
+            world.current.briefing.headlines = mergeUnique(world.current.briefing.headlines, r.headlines);
+            snapshot.playerView.briefing.headlines = world.current.briefing.headlines;
+            return enqueuePersist();
+          })
+          .catch(() => {}),
+      );
+      tasks.push(
+        llmGenerateBriefingDomesticRumorsOnly(sectionArgs)
+          .then((r) => {
+            world.current.briefing.domesticRumors = mergeUnique(world.current.briefing.domesticRumors, r.domesticRumors);
+            snapshot.playerView.briefing.domesticRumors = world.current.briefing.domesticRumors;
+            return enqueuePersist();
+          })
+          .catch(() => {}),
+      );
+      tasks.push(
+        llmGenerateTurnEventsOnly(sectionArgs)
+          .then((r) => {
+            world.current.incomingEvents = r.events;
+            snapshot.playerView.incomingEvents = r.events.map((e) => ({
+              id: e.id,
+              type: e.type,
+              actor: e.actor,
+              urgency: e.urgency,
+              visibleDescription: e.visibleDescription,
+              playerChoicesHints: e.playerChoicesHints,
+            }));
+            return enqueuePersist();
+          })
+          .catch(() => {}),
+      );
     }
 
-    if (dossierRes.status === "fulfilled" && dossierRes.value) {
-      snapshot.countryProfile = dossierRes.value.countryProfile;
+    if (needsDossier) {
+      tasks.push(
+        llmGenerateCountryProfile({
+          world,
+          indicators: {
+            economicStability: snapshot.playerView.indicators.economicStability,
+            legitimacy: snapshot.playerView.indicators.legitimacy,
+            unrestLevel: snapshot.playerView.indicators.unrestLevel,
+            intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
+          },
+        })
+          .then((r) => {
+            snapshot.countryProfile = r.countryProfile;
+            return enqueuePersist();
+          })
+          .catch(() => {}),
+      );
     }
 
-    // Persist only if we actually improved anything.
-    if (
-      (pkgRes.status === "fulfilled" && pkgRes.value) ||
-      (dossierRes.status === "fulfilled" && dossierRes.value)
-    ) {
-      await prisma.game.update({
-        where: { id: gameId },
-        data: {
-          worldState: world as unknown as object,
-          lastPlayerSnapshot: snapshot as unknown as object,
-        },
-      });
-    }
+    await Promise.allSettled(tasks);
+    await persistQueue;
 
     // Start diplomacy generation in background (do not block snapshot response).
     if (needsDiplomacy) hydrateDiplomacyInBackground({ gameId, world, snapshot });
@@ -648,132 +737,7 @@ export async function submitTurn(
   // Stamp runtime AI mode into the returned snapshot so the client can correctly
   // decide whether to auto-enhance resolution, show AI indicators, etc.
   finalOutcome.nextSnapshot.llmMode = llmMode();
-
-  // LLM work: run concurrently so end-turn feels faster.
-  // - next turn briefing/events (turn package)
-  // - current turn resolution narrative (cached into turnLog so the modal is instant)
   const llmOn = llmMode() === "ON";
-  let nextTurnPkg: { briefing: WorldState["current"]["briefing"]; events: IncomingEvent[]; llmRaw: unknown } | null = null;
-  let resolutionArtifact: { data: unknown; raw: unknown } | null = null;
-
-  const recentPromise = llmOn
-    ? prisma.turnLog.findMany({
-        where: { gameId },
-        orderBy: { turnNumber: "desc" },
-        take: 3,
-      })
-    : Promise.resolve([]);
-
-  const pkgPromise =
-    llmOn && !finalOutcome.failure
-      ? recentPromise.then((recent) =>
-          llmGenerateTurnPackage({
-            world: nextWorld,
-            phase: "TURN_N",
-            playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
-            lastTurnPublicResolution: outcome.publicResolutionText,
-            memory: recent
-              .map((r) => ({ turn: r.turnNumber, directive: r.playerDirective ?? null, publicResolution: r.publicResolution ?? null }))
-              .reverse(),
-          }),
-        )
-      : null;
-
-  const resolutionPromise =
-    llmOn
-      ? (async () => {
-          const metric = (label: string, before: number, after: number) => {
-            const b = Math.round(before);
-            const a = Math.round(after);
-            return { label, before: b, after: a, delta: a - b };
-          };
-          const deltas = [
-            metric("Legitimacy", worldBefore.player.politics.legitimacy, nextWorld.player.politics.legitimacy),
-            metric("Elite cohesion", worldBefore.player.politics.eliteCohesion, nextWorld.player.politics.eliteCohesion),
-            metric("Military loyalty", worldBefore.player.politics.militaryLoyalty, nextWorld.player.politics.militaryLoyalty),
-            metric("Unrest", worldBefore.player.politics.unrest, nextWorld.player.politics.unrest),
-            metric("Sovereignty integrity", worldBefore.player.politics.sovereigntyIntegrity, nextWorld.player.politics.sovereigntyIntegrity),
-            metric("Global credibility", worldBefore.player.politics.credibilityGlobal, nextWorld.player.politics.credibilityGlobal),
-            metric("Economic stability", worldBefore.player.economy.economicStability, nextWorld.player.economy.economicStability),
-            metric("Inflation pressure", worldBefore.player.economy.inflationPressure, nextWorld.player.economy.inflationPressure),
-            metric("Debt stress", worldBefore.player.economy.debtStress, nextWorld.player.economy.debtStress),
-            metric("Military readiness", worldBefore.player.military.readiness, nextWorld.player.military.readiness),
-          ];
-
-          const actorIds = Object.keys(nextWorld.actors) as Array<keyof typeof nextWorld.actors>;
-          const actorShifts = actorIds
-            .map((id) => {
-              const b = worldBefore.actors[id];
-              const a = nextWorld.actors[id];
-              return {
-                actor: a.name,
-                posture: a.postureTowardPlayer,
-                trustDelta: a.trust - b.trust,
-                escalationDelta: a.willingnessToEscalate - b.willingnessToEscalate,
-              };
-            })
-            .sort((x, y) => Math.abs(y.trustDelta) + Math.abs(y.escalationDelta) - (Math.abs(x.trustDelta) + Math.abs(x.escalationDelta)))
-            .slice(0, 6);
-
-          const threats = actorIds
-            .map((id) => nextWorld.actors[id])
-            .map((a) => ({
-              name: a.name,
-              score:
-                (a.postureTowardPlayer === "hostile" ? 50 : a.postureTowardPlayer === "neutral" ? 20 : 0) +
-                (100 - a.trust) * 0.35 +
-                a.willingnessToEscalate * 0.35 +
-                a.domesticPressure * 0.2,
-            }))
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 4)
-            .map((t) => `Pressure vector: ${t.name}`);
-
-          const translatedActions = actions.map((a) => {
-            const subkind = (a as unknown as { subkind?: unknown }).subkind;
-            const kind = typeof subkind === "string" && subkind.trim() ? subkind.trim() : a.kind;
-            return { kind, summary: summarizeAction(a) };
-          });
-
-          const llm = await llmGenerateResolution({
-            turnNumber: outcome.turnResolved,
-            directive: playerDirective?.trim() ? playerDirective.trim() : undefined,
-            translatedActions,
-            deltas,
-            actorShifts,
-            threats,
-            worldBefore,
-            worldAfter: nextWorld,
-          });
-          return llm;
-        })()
-      : null;
-
-  const [pkgRes, resolutionRes] = await Promise.allSettled([
-    pkgPromise ?? Promise.resolve(null),
-    resolutionPromise ?? Promise.resolve(null),
-  ]);
-
-  if (pkgRes.status === "fulfilled" && pkgRes.value) {
-    nextWorld.current.briefing = pkgRes.value.briefing;
-    nextWorld.current.incomingEvents = pkgRes.value.events;
-    nextTurnPkg = { briefing: pkgRes.value.briefing, events: pkgRes.value.events, llmRaw: pkgRes.value.llmRaw };
-
-    // Ensure the returned snapshot reflects the LLM turn package.
-    finalOutcome.nextSnapshot.playerView.briefing = pkgRes.value.briefing;
-    finalOutcome.nextSnapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
-      id: e.id,
-      type: e.type,
-      actor: e.actor,
-      urgency: e.urgency,
-      visibleDescription: e.visibleDescription,
-      playerChoicesHints: e.playerChoicesHints,
-    }));
-  }
-
-  if (resolutionRes.status === "fulfilled" && resolutionRes.value) {
-    resolutionArtifact = { data: resolutionRes.value.data, raw: resolutionRes.value.llmRaw };
-  }
 
   // Capture after-state for logging. Must be cloned because `nextWorld` continues to be mutated (LLM turn package, etc.)
   const worldAfter = structuredClone(nextWorld) as WorldState;
@@ -795,12 +759,9 @@ export async function submitTurn(
         worldState: { before: worldBefore, after: worldAfter } as unknown as object,
         failure: finalOutcome.failure ? (finalOutcome.failure as unknown as object) : undefined,
         llmArtifacts:
-          directiveArtifact || nextTurnPkg?.llmRaw || resolutionArtifact
+          directiveArtifact
             ? ({
                 directiveParse: directiveArtifact ?? null,
-                nextTurnPackage: nextTurnPkg?.llmRaw ?? null,
-                resolution: resolutionArtifact?.data ?? null,
-                resolutionRaw: resolutionArtifact?.raw ?? null,
               } as unknown as object)
             : undefined,
       },
@@ -816,6 +777,18 @@ export async function submitTurn(
       },
     });
   });
+
+  // Fire-and-forget: do NOT block the submit-turn API on LLM work.
+  // - turn-start hydration for the *next* snapshot (briefing sections + events)
+  // - resolution narrative caching (for AfterAction modal)
+  if (llmOn && !finalOutcome.failure) {
+    void hydrateSnapshotWithLlmIfNeeded({
+      gameId,
+      world: structuredClone(nextWorld) as WorldState,
+      snapshot: structuredClone(finalOutcome.nextSnapshot) as GameSnapshot,
+    }).catch(() => {});
+    void getResolutionReport(gameId, outcome.turnResolved, { forceLlm: true }).catch(() => {});
+  }
 
   return finalOutcome;
 }
@@ -996,6 +969,8 @@ export async function getResolutionReport(
   signalsUnknown: string[];
   deltas: Array<{ label: string; before: number; after: number; delta: number }>;
   actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
+  actorFieldDeltas: Array<{ actorId: string; actor: string; field: string; before: number; after: number; delta: number }>;
+  postureChanges: Array<{ actorId: string; actor: string; before: string; after: string }>;
   threats: string[];
   directiveParseNotes?: string[];
   llm?: unknown;
@@ -1056,6 +1031,40 @@ export async function getResolutionReport(
     .sort((x, y) => Math.abs(y.trustDelta) + Math.abs(y.escalationDelta) - (Math.abs(x.trustDelta) + Math.abs(x.escalationDelta)))
     .slice(0, 6);
 
+  const postureChanges = actorIds
+    .map((id) => {
+      const b = beforeWorld.actors[id];
+      const a = afterWorld.actors[id];
+      return { actorId: String(id), actor: a.name, before: b.postureTowardPlayer, after: a.postureTowardPlayer };
+    })
+    .filter((x) => x.before !== x.after)
+    .slice(0, 6);
+
+  const actorFieldDeltas = actorIds
+    .flatMap((id) => {
+      const b = beforeWorld.actors[id];
+      const a = afterWorld.actors[id];
+      const fields: Array<{ field: string; before: number; after: number }> = [
+        { field: "trust", before: b.trust, after: a.trust },
+        { field: "willingnessToEscalate", before: b.willingnessToEscalate, after: a.willingnessToEscalate },
+        { field: "domesticPressure", before: b.domesticPressure, after: a.domesticPressure },
+        { field: "sanctionsPolicyStrength", before: b.sanctionsPolicyStrength, after: a.sanctionsPolicyStrength },
+        { field: "allianceCommitmentStrength", before: b.allianceCommitmentStrength, after: a.allianceCommitmentStrength },
+      ];
+      return fields
+        .map((f) => ({
+          actorId: String(id),
+          actor: a.name,
+          field: f.field,
+          before: Math.round(f.before),
+          after: Math.round(f.after),
+          delta: Math.round(f.after) - Math.round(f.before),
+        }))
+        .filter((x) => x.delta !== 0);
+    })
+    .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta))
+    .slice(0, 12);
+
   const threats = actorIds
     .map((id) => afterWorld.actors[id])
     .map((a) => ({
@@ -1086,6 +1095,8 @@ export async function getResolutionReport(
     signalsUnknown: (row.signalsUnknown as unknown as string[]) ?? [],
     deltas,
     actorShifts,
+    actorFieldDeltas,
+    postureChanges,
     threats,
     directiveParseNotes:
       row.llmArtifacts && typeof row.llmArtifacts === "object"

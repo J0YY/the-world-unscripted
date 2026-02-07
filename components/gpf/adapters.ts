@@ -779,9 +779,20 @@ function deriveBriefingFeed(snapshot: GameSnapshot): UiBriefingItem[] {
 
   const items: UiBriefingItem[] = [];
 
+  const hash = (s: string) => {
+    // Small stable hash for React keys across incremental updates.
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
+    return (h >>> 0).toString(36);
+  };
+
+  const stableId = (source: UiBriefingItem["source"], content: string) => {
+    return `b-${source}-${hash(content.slice(0, 260))}`;
+  };
+
   for (const it of b.intelBriefs) {
     items.push({
-      id: `intel-${idx}`,
+      id: stableId("Intercept", it.text),
       timestamp: nowish[idx++] ?? "—",
       source: "Intercept",
       content: it.text,
@@ -790,7 +801,7 @@ function deriveBriefingFeed(snapshot: GameSnapshot): UiBriefingItem[] {
 
   for (const m of b.diplomaticMessages) {
     items.push({
-      id: `dip-${idx}`,
+      id: stableId("Embassy Cable", m),
       timestamp: nowish[idx++] ?? "—",
       source: "Embassy Cable",
       content: m,
@@ -799,7 +810,7 @@ function deriveBriefingFeed(snapshot: GameSnapshot): UiBriefingItem[] {
 
   for (const h of b.headlines) {
     items.push({
-      id: `hd-${idx}`,
+      id: stableId("Markets", h),
       timestamp: nowish[idx++] ?? "—",
       source: "Markets",
       content: h,
@@ -808,7 +819,7 @@ function deriveBriefingFeed(snapshot: GameSnapshot): UiBriefingItem[] {
 
   for (const r of b.domesticRumors) {
     items.push({
-      id: `rum-${idx}`,
+      id: stableId("Foreign Desk", r),
       timestamp: nowish[idx++] ?? "—",
       source: "Foreign Desk",
       content: r,

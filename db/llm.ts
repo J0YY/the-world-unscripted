@@ -5,6 +5,10 @@ import {
   LlmControlRoomViewSchema,
   LlmCountryProfileSchema,
   LlmGenerateBriefingOnlySchema,
+  LlmGenerateBriefingDiplomaticMessagesOnlySchema,
+  LlmGenerateBriefingDomesticRumorsOnlySchema,
+  LlmGenerateBriefingHeadlinesOnlySchema,
+  LlmGenerateBriefingIntelBriefsOnlySchema,
   LlmGenerateEventsOnlySchema,
   LlmDiplomacySchema,
   LlmDiplomacyChatResponseSchema,
@@ -510,6 +514,340 @@ export async function llmGenerateTurnPackage(args: {
   const err = lastBriefErr ?? lastEventsErr ?? new Error("LLM turn package failed");
   throw err instanceof Error ? err : new Error(String(err));
 
+}
+
+function buildTurnStartUserContext(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}) {
+  const context = summarizeWorldForLlm(args.world);
+  const memory = Array.isArray(args.memory) ? args.memory.slice(-3) : [];
+  const userContext = [
+    `PHASE: ${args.phase}`,
+    args.playerDirective ? `PLAYER_DIRECTIVE: ${args.playerDirective}` : "PLAYER_DIRECTIVE: (none)",
+    args.lastTurnPublicResolution ? `LAST_TURN_PUBLIC_RESOLUTION:\n${args.lastTurnPublicResolution}` : "",
+    memory.length ? `RECENT_TURNS_MEMORY:\n${JSON.stringify(memory, null, 2)}` : "RECENT_TURNS_MEMORY: []",
+    "",
+    "CONTEXT (qualitative only; do not invent numeric scores):",
+    JSON.stringify(context, null, 2),
+    "",
+  ].join("\n");
+
+  const names = [
+    context.player.name,
+    ...(Array.isArray(context.player.neighbors) ? context.player.neighbors : []),
+    ...(Array.isArray(context.actors) ? context.actors.map((a) => a.name) : []),
+  ]
+    .filter((x) => typeof x === "string")
+    .map((s) => String(s).trim())
+    .filter(Boolean)
+    .slice(0, 24);
+
+  const mentionsAny = (s: string) => {
+    const t = s.toLowerCase();
+    return names.some((n) => n.length >= 3 && t.includes(n.toLowerCase()));
+  };
+
+  return { userContext, mentionsAny };
+}
+
+function validateBriefingLines(lines: string[], mentionsAny: (s: string) => boolean) {
+  const missing = lines.filter((l) => !mentionsAny(String(l)));
+  if (missing.length) throw new Error("Briefing too generic: some lines did not mention player/neighbor/actor names from context.");
+  if (lines.some((s) => leaksNumbers(String(s)))) throw new Error("LLM output leaked numeric scoring; disabled for this turn");
+}
+
+export async function llmGenerateBriefingHeadlinesOnly(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}): Promise<{ headlines: string[]; llmRaw: unknown }> {
+  const system = [
+    "You are the briefing generator for a grounded geopolitical simulation.",
+    "Tone: Reuters/cabinet memo style; unsentimental and specific.",
+    "Output MUST be strict JSON object only.",
+    "Hard constraints:",
+    "- Do NOT include numeric ratings/scores (no '72/100', no indices).",
+    "- Do NOT mention game mechanics, hidden state, RNG, or internal fields.",
+    "- Every line MUST mention at least one proper noun from context (player country, a neighbor, or a named external actor).",
+    "TASK: Generate ONLY the briefing headlines.",
+    "OUTPUT: Return JSON with key 'headlines' ONLY.",
+  ].join("\n");
+
+  const { userContext, mentionsAny } = buildTurnStartUserContext(args);
+  const validate = (obj: unknown) => {
+    const parsed = LlmGenerateBriefingHeadlinesOnlySchema.parse(obj);
+    validateBriefingLines(parsed.headlines, mentionsAny);
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  const temps = [0.65, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : ["", "REPAIR MODE:", "Regenerate with more specificity.", lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : ""].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user: [userContext, "Return JSON matching this shape:", JSON.stringify({ headlines: ["string"] }, null, 2)].join("\n"),
+        schemaName: attempt === 0 ? "LlmGenerateBriefingHeadlinesOnlySchema" : `LlmGenerateBriefingHeadlinesOnlySchema_retry_${attempt}`,
+        validate,
+        temperature: temps[attempt] ?? 0.5,
+      });
+      return { headlines: data.headlines, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM headlines failed");
+}
+
+export async function llmGenerateBriefingDomesticRumorsOnly(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}): Promise<{ domesticRumors: string[]; llmRaw: unknown }> {
+  const system = [
+    "You are the briefing generator for a grounded geopolitical simulation.",
+    "Tone: Reuters/cabinet memo style; unsentimental and specific.",
+    "Output MUST be strict JSON object only.",
+    "Hard constraints:",
+    "- Do NOT include numeric ratings/scores (no '72/100', no indices).",
+    "- Do NOT mention game mechanics, hidden state, RNG, or internal fields.",
+    "- Every line MUST mention at least one proper noun from context (player country, a neighbor, or a named external actor).",
+    "TASK: Generate ONLY the briefing domestic rumors.",
+    "OUTPUT: Return JSON with key 'domesticRumors' ONLY.",
+  ].join("\n");
+
+  const { userContext, mentionsAny } = buildTurnStartUserContext(args);
+  const validate = (obj: unknown) => {
+    const parsed = LlmGenerateBriefingDomesticRumorsOnlySchema.parse(obj);
+    validateBriefingLines(parsed.domesticRumors, mentionsAny);
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  const temps = [0.65, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : ["", "REPAIR MODE:", "Regenerate with more specificity.", lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : ""].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user: [userContext, "Return JSON matching this shape:", JSON.stringify({ domesticRumors: ["string"] }, null, 2)].join("\n"),
+        schemaName:
+          attempt === 0 ? "LlmGenerateBriefingDomesticRumorsOnlySchema" : `LlmGenerateBriefingDomesticRumorsOnlySchema_retry_${attempt}`,
+        validate,
+        temperature: temps[attempt] ?? 0.5,
+      });
+      return { domesticRumors: data.domesticRumors, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM domestic rumors failed");
+}
+
+export async function llmGenerateBriefingDiplomaticMessagesOnly(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}): Promise<{ diplomaticMessages: string[]; llmRaw: unknown }> {
+  const system = [
+    "You are the briefing generator for a grounded geopolitical simulation.",
+    "Tone: Reuters/cabinet memo style; unsentimental and specific.",
+    "Output MUST be strict JSON object only.",
+    "Hard constraints:",
+    "- Do NOT include numeric ratings/scores (no '72/100', no indices).",
+    "- Do NOT mention game mechanics, hidden state, RNG, or internal fields.",
+    "- Every line MUST mention at least one proper noun from context (player country, a neighbor, or a named external actor).",
+    "TASK: Generate ONLY the briefing diplomatic messages.",
+    "OUTPUT: Return JSON with key 'diplomaticMessages' ONLY.",
+  ].join("\n");
+
+  const { userContext, mentionsAny } = buildTurnStartUserContext(args);
+  const validate = (obj: unknown) => {
+    const parsed = LlmGenerateBriefingDiplomaticMessagesOnlySchema.parse(obj);
+    validateBriefingLines(parsed.diplomaticMessages, mentionsAny);
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  const temps = [0.65, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : ["", "REPAIR MODE:", "Regenerate with more specificity.", lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : ""].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user: [userContext, "Return JSON matching this shape:", JSON.stringify({ diplomaticMessages: ["string"] }, null, 2)].join("\n"),
+        schemaName:
+          attempt === 0
+            ? "LlmGenerateBriefingDiplomaticMessagesOnlySchema"
+            : `LlmGenerateBriefingDiplomaticMessagesOnlySchema_retry_${attempt}`,
+        validate,
+        temperature: temps[attempt] ?? 0.5,
+      });
+      return { diplomaticMessages: data.diplomaticMessages, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM diplomatic messages failed");
+}
+
+export async function llmGenerateBriefingIntelBriefsOnly(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}): Promise<{ intelBriefs: Array<{ text: string; confidence: "low" | "med" | "high" }>; llmRaw: unknown }> {
+  const system = [
+    "You are the briefing generator for a grounded geopolitical simulation.",
+    "Tone: Reuters/cabinet memo style; unsentimental and specific.",
+    "Output MUST be strict JSON object only.",
+    "Hard constraints:",
+    "- Do NOT include numeric ratings/scores (no '72/100', no indices).",
+    "- Do NOT mention game mechanics, hidden state, RNG, or internal fields.",
+    "- Every line MUST mention at least one proper noun from context (player country, a neighbor, or a named external actor).",
+    "TASK: Generate ONLY the briefing intel briefs.",
+    "OUTPUT: Return JSON with key 'intelBriefs' ONLY.",
+  ].join("\n");
+
+  const { userContext, mentionsAny } = buildTurnStartUserContext(args);
+  const validate = (obj: unknown) => {
+    const parsed = LlmGenerateBriefingIntelBriefsOnlySchema.parse(obj);
+    validateBriefingLines(parsed.intelBriefs.map((b) => b.text), mentionsAny);
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  const temps = [0.65, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : ["", "REPAIR MODE:", "Regenerate with more specificity.", lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : ""].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user: [
+          userContext,
+          "Return JSON matching this shape:",
+          JSON.stringify({ intelBriefs: [{ text: "string", confidence: "low|med|high" }] }, null, 2),
+        ].join("\n"),
+        schemaName: attempt === 0 ? "LlmGenerateBriefingIntelBriefsOnlySchema" : `LlmGenerateBriefingIntelBriefsOnlySchema_retry_${attempt}`,
+        validate,
+        temperature: temps[attempt] ?? 0.5,
+      });
+      return { intelBriefs: data.intelBriefs, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM intel briefs failed");
+}
+
+export async function llmGenerateTurnEventsOnly(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}): Promise<{ events: IncomingEvent[]; llmRaw: unknown }> {
+  const system = [
+    "You are the event generator for a grounded geopolitical simulation.",
+    "Tone: Reuters/cabinet memo style; unsentimental and specific.",
+    "Output MUST be strict JSON object only.",
+    "Hard constraints:",
+    "- Do NOT include numeric ratings/scores (no '72/100', no indices).",
+    "- Do NOT mention game mechanics, hidden state, RNG, or internal fields.",
+    "- Events must be plausible: sanctions, protests, leaks, border incidents, interdictions, IMF contact, cyber incidents, insurgent attacks.",
+    "- Event effects must be modest and bounded; use the provided keys only.",
+    "TASK: Generate 2-5 incoming events only (no briefing).",
+    "OUTPUT: Return JSON with key 'events' ONLY.",
+  ].join("\n");
+
+  const { userContext } = buildTurnStartUserContext(args);
+  const validate = (obj: unknown) => LlmGenerateEventsOnlySchema.parse(obj);
+
+  let lastErr: unknown = null;
+  const temps = [0.7, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : ["", "REPAIR MODE:", "Regenerate events with same schema.", lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : ""].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user: [
+          userContext,
+          "Return JSON matching this shape:",
+          JSON.stringify(
+            {
+              events: [
+                {
+                  type: "SANCTIONS_WARNING",
+                  actor: "US|EU|CHINA|RUSSIA|REGIONAL_1|REGIONAL_2|DOMESTIC|UNKNOWN",
+                  urgency: 1,
+                  visibleDescription: "string",
+                  playerChoicesHints: ["string"],
+                  effects: [{ kind: "DELTA", key: "player.politics.legitimacy", amount: -2, reason: "string", visibility: "hidden" }],
+                  scheduled: [{ kind: "SANCTIONS_BITE", dueInTurns: 2, payload: {} }],
+                },
+              ],
+            },
+            null,
+            2,
+          ),
+        ].join("\n"),
+        schemaName: attempt === 0 ? "LlmGenerateEventsOnlySchema_fast" : `LlmGenerateEventsOnlySchema_fast_retry_${attempt}`,
+        validate,
+        temperature: temps[attempt] ?? 0.5,
+      });
+
+      const turn = args.world.turn;
+      const events: IncomingEvent[] = data.events.map((e, idx) => ({
+        id: `T${turn}-E${idx}-LLM-${e.type}`,
+        type: e.type as IncomingEvent["type"],
+        actor: e.actor as IncomingEvent["actor"],
+        urgency: e.urgency,
+        visibleDescription: e.visibleDescription,
+        playerChoicesHints: e.playerChoicesHints,
+        hiddenPayload: {
+          effects: e.effects as IncomingEvent["hiddenPayload"]["effects"],
+          scheduled: (e.scheduled ?? []).map((s, j) => ({
+            id: `T${turn}-SC${idx}-${j}-${s.kind}`,
+            dueTurn: turn + s.dueInTurns,
+            kind: s.kind,
+            payload: s.payload ?? {},
+          })),
+        },
+      }));
+
+      return { events, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM events failed");
 }
 
 export async function llmParsePlayerDirective(args: {

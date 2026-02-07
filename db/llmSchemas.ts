@@ -155,6 +155,23 @@ export const LlmGenerateEventsOnlySchema = z.object({
   events: LlmEventsSchema,
 });
 
+// For incremental briefing hydration: each section can be generated independently.
+export const LlmGenerateBriefingHeadlinesOnlySchema = z.object({
+  headlines: LlmBriefingSchema.shape.headlines,
+});
+
+export const LlmGenerateBriefingDomesticRumorsOnlySchema = z.object({
+  domesticRumors: LlmBriefingSchema.shape.domesticRumors,
+});
+
+export const LlmGenerateBriefingDiplomaticMessagesOnlySchema = z.object({
+  diplomaticMessages: LlmBriefingSchema.shape.diplomaticMessages,
+});
+
+export const LlmGenerateBriefingIntelBriefsOnlySchema = z.object({
+  intelBriefs: LlmBriefingSchema.shape.intelBriefs,
+});
+
 export const LlmRewriteTurnSchema = z.object({
   briefing: z.object({
     text: z.string().min(40).max(6000),
