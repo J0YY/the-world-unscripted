@@ -10,6 +10,17 @@ const ScheduledKindSchema = z.enum([
   "INTEL_REVELATION",
 ]);
 
+const VisibilitySchema = z.preprocess((v) => {
+  // Models sometimes emit "private"/"PUBLIC" or omit the field.
+  // Normalize to our engine-facing visibility enum.
+  if (v === undefined || v === null) return "hidden";
+  if (typeof v !== "string") return v;
+  const t = v.trim().toLowerCase();
+  if (t === "private" || t === "internal" || t === "secret" || t === "nonpublic") return "hidden";
+  if (t === "open") return "public";
+  return t;
+}, z.enum(["public", "hidden"]));
+
 const EffectDeltaSchema = z.object({
   kind: z.literal("DELTA"),
   key: z.enum([
@@ -32,7 +43,7 @@ const EffectDeltaSchema = z.object({
   ]),
   amount: z.number().int().min(-12).max(12),
   reason: z.string().min(4).max(140),
-  visibility: z.enum(["public", "hidden"]),
+  visibility: VisibilitySchema,
 });
 
 const EffectDeltaActorSchema = z.object({
@@ -47,14 +58,14 @@ const EffectDeltaActorSchema = z.object({
   ]),
   amount: z.number().int().min(-10).max(10),
   reason: z.string().min(4).max(140),
-  visibility: z.enum(["public", "hidden"]),
+  visibility: VisibilitySchema,
 });
 
 const EffectSetSanctionsSchema = z.object({
   kind: z.literal("SET_SANCTIONS"),
   active: z.boolean(),
   reason: z.string().min(4).max(140),
-  visibility: z.enum(["public", "hidden"]),
+  visibility: VisibilitySchema,
 });
 
 const EffectOpLiteSchema = z.discriminatedUnion("kind", [
