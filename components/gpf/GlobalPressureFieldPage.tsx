@@ -38,12 +38,10 @@ export default function GlobalPressureFieldPage({
   const [deltaPerTurn, setDeltaPerTurn] = useState<number | null>(null);
 
   const derived = useMemo(() => deriveGpf(snapshot, mode), [snapshot, mode]);
+  const deltaPerTurnDisplay = snapshot.turn <= 1 ? null : deltaPerTurn;
 
   useEffect(() => {
-    if (snapshot.turn <= 1) {
-      setDeltaPerTurn(null);
-      return;
-    }
+    if (snapshot.turn <= 1) return;
     const ac = new AbortController();
     apiPressureDelta(snapshot.gameId, snapshot.turn, { signal: ac.signal })
       .then((r) => setDeltaPerTurn(typeof r.deltaPerTurn === "number" ? r.deltaPerTurn : null))
@@ -137,7 +135,7 @@ export default function GlobalPressureFieldPage({
           <div id="gpf-pressure">
             <WorldPressure
               pressureIndex={derived.pressureIndex}
-              deltaPerTurn={deltaPerTurn}
+              deltaPerTurn={deltaPerTurnDisplay}
               turn={derived.turn}
               narrativeGravity={derived.narrativeGravity}
               systemStrain={derived.systemStrain}

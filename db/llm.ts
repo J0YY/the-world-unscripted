@@ -371,7 +371,8 @@ export async function llmGenerateTurnPackage(args: {
   };
 
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  const temps = [0.85, 0.6, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
     try {
       const extra =
         attempt === 0
@@ -386,9 +387,9 @@ export async function llmGenerateTurnPackage(args: {
       const { data, raw } = await chatJson({
         system: system + extra,
         user,
-        schemaName: attempt === 0 ? "LlmGenerateTurnPackageSchema" : "LlmGenerateTurnPackageSchema_retry",
+        schemaName: attempt === 0 ? "LlmGenerateTurnPackageSchema" : `LlmGenerateTurnPackageSchema_retry_${attempt}`,
         validate: validateTurnPkg,
-        temperature: attempt === 0 ? 0.85 : 0.55,
+        temperature: temps[attempt] ?? 0.5,
       });
 
       const turn = args.world.turn;
@@ -854,84 +855,29 @@ export async function llmGenerateResolution(args: {
 
   const directiveIntents = args.directive ? extractDirectiveIntents(args.directive) : [];
 
-  const isBadWhenHighLabel = (label: string) => {
-    const l = String(label || "").toLowerCase();
-    return (
-      l.includes("unrest") ||
-      l.includes("inflation") ||
-      l.includes("debt") ||
-      l.includes("strain") ||
-      l.includes("pressure") ||
-      l.includes("corruption")
-    );
-  };
-
-  const qualitativeDelta = (d: { label: string; delta: number }) => {
-    const abs = Math.abs(d.delta);
-    const intensity = abs >= 10 ? "sharply" : abs >= 5 ? "notably" : "slightly";
-    const badWhenHigh = isBadWhenHighLabel(d.label);
-    const improved = badWhenHigh ? d.delta < 0 : d.delta > 0;
-    const verb = improved ? "improved" : "deteriorated";
-    return `${d.label} ${verb} ${intensity}`.trim();
-  };
-
-  const extractTargetFromSummary = (summary: string): string | null => {
-    const s = String(summary || "");
-    const m1 = s.match(/\bin\s+([A-Za-z][A-Za-z .'-]{1,40})/i);
-    if (m1?.[1]) return m1[1].trim();
-    const m2 = s.match(/\bagainst\s+([A-Za-z][A-Za-z .'-]{1,40})/i);
-    if (m2?.[1]) return m2[1].trim();
-    return null;
-  };
-
-  const paraphraseAction = (a: { kind: string; summary: string }): string => {
-    const kind = String(a.kind || "").toUpperCase();
-    const target = extractTargetFromSummary(a.summary) || "the target state";
-    switch (kind) {
-      case "LIMITED_STRIKE":
-        return `Carried out a short, high-precision strike package against ${target} (selected military/logistics nodes; calibrated to signal capability without committing to a full campaign).`;
-      case "FULL_INVASION":
-        return `Pushed a combined-arms offensive into ${target}, attempting to seize terrain and force political capitulation through sustained pressure.`;
-      case "MOBILIZE":
-        return `Activated a surge posture: reserve call-ups, unit repositioning, logistics activation, and internal security tightening tied to ${target}.`;
-      case "PROXY_SUPPORT":
-        return `Expanded deniable support to aligned networks connected to ${target} (financing, materiel, and advisors routed through intermediaries).`;
-      case "ARMS_PURCHASE":
-        return `Accelerated emergency procurement and resupply linked to operations around ${target}, prioritizing munitions, ISR, and sustainment.`;
-      case "SURVEILLANCE":
-        return `Increased ISR coverage and targeting collection focused on ${target} (signals, overhead, and HUMINT tasking) to reduce uncertainty.`;
-      case "COUNTERINTEL":
-        return `Ordered a counterintelligence sweep to disrupt hostile penetration and leaks associated with ${target}-related operations.`;
-      case "COVERT_OP":
-        return `Ran a deniable disruption operation tied to ${target} (pressure points selected for leverage rather than visibility).`;
-      default:
-        return `Executed a calibrated coercive action linked to ${target}, emphasizing control of escalation and narrative discipline.`;
-    }
-  };
-
-  const actionsForLlm = args.translatedActions.map(paraphraseAction).slice(0, 6);
-  const qualitativeTopDeltas = [...args.deltas]
-    .filter((d) => Number.isFinite(d.delta) && d.delta !== 0)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 4)
-    .map((d) => qualitativeDelta({ label: d.label, delta: d.delta }));
+  // IMPORTANT: Do not inject our own prose templates for "what actions occurred".
+  // Those templates make the output feel hard-coded. Give the model only terse,
+  // engine-derived summaries as hidden grounding and let it write the narrative
+  // directly from the player's directive + world context.
+  const actionsForLlm = args.translatedActions.map((a) => a.summary).slice(0, 6);
 
   const system = [
     "You write the end-of-turn resolution briefing for a geopolitical simulation.",
     "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
     "Write like a classified after-action memo: specific, operational, grounded. No fantasy.",
-    "PRIMARY OBJECTIVE: directly address the player's directive. The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests).",
+    "PRIMARY OBJECTIVE: respond to the PLAYER_DIRECTIVE as if it were pasted into ChatGPT, but in-world and after-action (state what happened, with concrete details).",
+    "The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests) and say what happened for each.",
     "You MUST cover every item in DIRECTIVE_INTENTS somewhere in the narrative (verbatim or close paraphrase).",
     "Be concrete and decisive. Avoid hedging words like 'may', 'might', 'could', 'likely' anywhere (including forecasts). Use firm projections ('will', 'expect', 'is set to') instead.",
     "Do NOT reveal internal raw state dumps.",
     "DO NOT mention any internal action classifications, enum names, or parameters (no 'LIMITED_STRIKE', no 'MOBILIZE', no 'intensity').",
     "DO NOT mention scores, indices, deltas, or any numeric rating changes in the narrative. Keep it in-world.",
-    "You may use the provided deltas/actions only as hidden guidance to stay consistent, but never quote them.",
+    "You may use the provided world context / deltas / action summaries only as hidden grounding to stay consistent, but never quote them.",
     "Do not use game-y button language like 'public/private', 'limited strike', or 'mobilization' as labels. Describe concrete actions (what moved, what was hit, what was announced, what was denied).",
     "Your narrative must state what happened, who escalated/de-escalated, what failed/held, and at least one political 'fall' (cabinet collapse, minister resignation, command shake-up, government crisis) IF domestic unrest/legitimacy worsened in the hidden guidance.",
     "If there was no sustained ground campaign, do NOT claim an entire country 'fell'. Instead describe partial collapses (local authority breakdown, party fracture, minister ouster, security services shake-up).",
     "Include at least 2 named places (cities, border crossings, ports, bases) relevant to the involved countries, and at least 2 external actors by name from PERCEPTIONS/THREATS.",
-    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_CONTEXT_BEFORE/AFTER and ACTIONS_TAKEN.",
+    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_CONTEXT_BEFORE/AFTER and the directive.",
     "CRITICAL CONSISTENCY: Do NOT invent strikes/invasions/mobilizations unless a MILITARY action was executed this turn.",
     "If COALITION_PARTNERS is non-empty, you MUST explicitly mention at least one partner by name in the resolved-events portion and show what coordination occurred (liaison, deconfliction, joint messaging, basing, logistics).",
     "If outcomes look counterintuitive, explain causality (timing lags, second-order effects, credibility costs) in-world.",
@@ -960,10 +906,10 @@ export async function llmGenerateResolution(args: {
     "DIRECTIVE_INTENTS (must be explicitly addressed):",
     JSON.stringify(directiveIntents, null, 2),
     "",
-    "ACTIONS_TAKEN_THIS_TURN (in-world paraphrase; treat as fact for the resolved events):",
+    "ENGINE_ACTION_SUMMARIES (hidden grounding only; do NOT echo verbatim; directive is primary):",
     JSON.stringify(actionsForLlm, null, 2),
     "",
-    "ACTIONS_RAW (authoritative; do not quote enum labels; use only to stay consistent):",
+    "ACTIONS_RAW (authoritative grounding; do not quote enum labels; do not let this override the directive):",
     JSON.stringify(args.translatedActions, null, 2),
     "",
     "SCORE_DELTAS (hidden guidance; do NOT quote numbers in narrative):",

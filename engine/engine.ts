@@ -9,8 +9,8 @@ import { generateBriefingAndEvents } from "./turnStart";
 
 export const ENGINE_ACTION_LIMIT = 2;
 
-export function createNewGameWorld(seed: string): WorldState {
-  return createInitialWorld(seed);
+export function createNewGameWorld(seed: string, opts?: { turnStartGenerator?: WorldState["turnStartGenerator"] }): WorldState {
+  return createInitialWorld(seed, opts);
 }
 
 export function getPlayerSnapshot(gameId: string, world: WorldState, status: "ACTIVE" | "FAILED"): GameSnapshot {
@@ -68,9 +68,15 @@ export function submitTurnAndAdvance(
     status = "FAILED";
   } else {
     world.turn += 1;
-    const { briefing, events: nextEvents } = generateBriefingAndEvents(world, { forcePressureEvent: false });
-    world.current.briefing = briefing;
-    world.current.incomingEvents = nextEvents;
+    if (world.turnStartGenerator === "llm") {
+      // LLM-driven turn start: leave blank; db/llm layer will fill it.
+      world.current.briefing = { text: "", headlines: [], domesticRumors: [], diplomaticMessages: [], intelBriefs: [] };
+      world.current.incomingEvents = [];
+    } else {
+      const { briefing, events: nextEvents } = generateBriefingAndEvents(world, { forcePressureEvent: false });
+      world.current.briefing = briefing;
+      world.current.incomingEvents = nextEvents;
+    }
   }
 
   const nextSnapshot = buildSnapshot(gameId, world, status);
