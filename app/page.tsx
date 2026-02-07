@@ -13,6 +13,15 @@ import type { LandingStep } from "@/components/twi2/hscroll-nav";
 
 type Busy = null | "new" | "load" | "reset";
 
+function needsHydration(s: GameSnapshot | null): boolean {
+  if (!s) return false;
+  if (s.llmMode !== "ON") return false;
+  const briefing = s.playerView?.briefing;
+  const incoming = s.playerView?.incomingEvents ?? [];
+  const headlines = Array.isArray(briefing?.headlines) ? briefing.headlines : [];
+  return incoming.length === 0 || headlines.length === 0;
+}
+
 export default function LandingPage() {
   const router = useRouter();
   const [busy, setBusy] = useState<Busy>(null);
@@ -64,8 +73,16 @@ export default function LandingPage() {
       setStoredGameId(snap.gameId);
       setSnap(snap);
       // Start snapshot hydration immediately (LLM briefing/events + dossier),
-      // while the user is still on the landing page.
-      void apiSnapshot(snap.gameId).then(setSnap).catch(() => {});
+      // while the user is still on the landing page. Poll until filled.
+      void (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 45_000) {
+          const s = await apiSnapshot(snap.gameId);
+          setSnap(s);
+          if (!needsHydration(s)) break;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      })().catch(() => {});
       scrollToStep("dossier");
     } finally {
       setBusy(null);

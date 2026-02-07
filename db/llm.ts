@@ -1,4 +1,4 @@
-import type { CountryProfile, ForeignPower, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
+import type { ActorId, CountryProfile, ExternalActorState, ForeignPower, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
 import type { z } from "zod";
 import {
@@ -1368,17 +1368,22 @@ export async function llmGenerateDiplomacy(args: {
   world: WorldState;
 }): Promise<{ nations: ForeignPower[]; llmRaw: unknown }> {
   // Deterministic fallback function (used if LLM is OFF or fails)
+  const defaultMinisterTitle = (id: ActorId) =>
+    id === "US" ? "President" : id === "CHINA" ? "General Secretary" : id === "RUSSIA" ? "President" : id === "EU" ? "High Representative" : "Prime Minister";
+
+  const deterministicNation = (a: ExternalActorState): ForeignPower => ({
+    id: a.id,
+    name: a.name,
+    ministerName: `${defaultMinisterTitle(a.id)} ${a.name.split(" ")[0] ?? a.name}`.slice(0, 60),
+    description: `${a.id.startsWith("REGIONAL") ? "A neighboring power" : "A major global power"} with ${a.postureTowardPlayer} posture.`.slice(0, 300),
+    stance: a.trust,
+    hiddenAgenda: "Maintain leverage and expand influence through pressure, access, and narrative control.".slice(0, 300),
+    chatHistory: [],
+  });
+
   const getDeterministicDiplomacy = () => ({
-      nations: Object.values(args.world.actors).map((a) => ({
-        id: a.id,
-        name: a.name,
-        ministerName: (a.id === "US" ? "President" : a.id === "CHINA" ? "General Secretary" : "Ambassador") + " " + a.name.split(" ")[0],
-        description: (a.id.startsWith("REGIONAL") ? "A neighboring power" : "A major global power") + " with " + a.postureTowardPlayer + " posture.",
-        stance: a.trust,
-        hiddenAgenda: "To maintain their sphere of influence.",
-        chatHistory: [],
-      })),
-      llmRaw: { generatedBy: "deterministic_fallback" },
+    nations: Object.values(args.world.actors).map(deterministicNation),
+    llmRaw: { generatedBy: "deterministic_fallback" },
   });
 
   if (llmMode() === "OFF") {
@@ -1386,11 +1391,13 @@ export async function llmGenerateDiplomacy(args: {
   }
 
   const system = [
-    "You are a narrative designer for a geopolitical simulation.",
-    "Generate flavor profiles for the rival nations.",
-    "Minister names should be Heads of State or High Representatives (President, Prime Minister, General, Ambassador) appropriate for their region.",
-    "Hidden agendas should be suspicious and self-interested.",
-    "Note: REGIONAL actors are direct neighbors. Major powers (US, CHINA, RUSSIA, EU) are likely distant but influential.",
+    "You generate diplomatic actor profiles for a grounded geopolitical simulation.",
+    "Return STRICT JSON ONLY. No markdown, no commentary.",
+    "You must output exactly one profile per actor id from CONTEXT. Do not invent extra nations.",
+    "Every nation object MUST include: id, name, ministerName, description, hiddenAgenda.",
+    "Minister names should sound like real leaders/high reps (President/PM/High Representative/General Secretary).",
+    "Descriptions should be concrete and specific to posture/objectives (no filler).",
+    "Hidden agendas should be self-interested and plausible (trade, sanctions, basing, intel, regional influence).",
   ].join("\n");
 
 
@@ -1408,17 +1415,96 @@ export async function llmGenerateDiplomacy(args: {
     "CONTEXT:",
     JSON.stringify(context, null, 2),
     "",
-    "Generate profiles for these actors.",
-    "Return JSON matching key 'nations' array.",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        nations: [
+          {
+            id: "US",
+            name: "United States",
+            ministerName: "President …",
+            description: "string",
+            hiddenAgenda: "string",
+            avatarId: "optional",
+          },
+        ],
+      },
+      null,
+      2,
+    ),
   ].join("\n");
 
   try {
+    const actorEntries = Object.values(args.world.actors);
+    const actorIds = new Set(actorEntries.map((a) => a.id));
+    const actorByName = new Map(actorEntries.map((a) => [a.name.toLowerCase(), a.id]));
+
+    const coerceAndValidate = (obj: unknown) => {
+      if (typeof obj !== "object" || obj === null) return LlmDiplomacySchema.parse(obj);
+      const o = obj as Record<string, unknown>;
+      const nationsRaw = Array.isArray(o.nations) ? o.nations : [];
+
+      const out: Array<{ id: string; name: string; ministerName: string; description: string; hiddenAgenda: string; avatarId?: string }> = [];
+      const seen = new Set<string>();
+
+      for (const item of nationsRaw) {
+        if (!item || typeof item !== "object") continue;
+        const it = item as Record<string, unknown>;
+        const rawId = typeof it.id === "string" ? it.id.trim() : "";
+        const rawName = typeof it.name === "string" ? it.name.trim() : "";
+
+        let id = rawId.toUpperCase();
+        if (!actorIds.has(id as ActorId)) {
+          const mapped = rawName ? actorByName.get(rawName.toLowerCase()) : undefined;
+          if (mapped) id = mapped;
+          else continue;
+        }
+        if (seen.has(id)) continue;
+        seen.add(id);
+
+        const actor = args.world.actors[id as ActorId];
+        const name = rawName || actor.name;
+        const ministerName =
+          (typeof it.ministerName === "string" && it.ministerName.trim() ? it.ministerName.trim() : `${defaultMinisterTitle(actor.id)} ${actor.name.split(" ")[0] ?? actor.name}`)
+            .slice(0, 60);
+        const description =
+          (typeof it.description === "string" && it.description.trim()
+            ? it.description.trim()
+            : `${actor.id.startsWith("REGIONAL") ? "Neighboring power" : "Major power"} with ${actor.postureTowardPlayer} posture; priorities: ${actor.objectives.map((x) => x.text).slice(0, 2).join("; ") || "influence and leverage"}.`)
+            .slice(0, 300);
+        const hiddenAgenda =
+          (typeof it.hiddenAgenda === "string" && it.hiddenAgenda.trim()
+            ? it.hiddenAgenda.trim()
+            : `Exploit leverage points against ${args.world.player.name}: access, sanctions, basing, intelligence, and regional alignment.`)
+            .slice(0, 300);
+        const avatarId = typeof it.avatarId === "string" && it.avatarId.trim() ? it.avatarId.trim().slice(0, 40) : undefined;
+
+        out.push({ id, name, ministerName, description, hiddenAgenda, avatarId });
+      }
+
+      // Ensure one entry per actor id (fill any missing with deterministic defaults).
+      for (const a of actorEntries) {
+        if (seen.has(a.id)) continue;
+        const dn = deterministicNation(a);
+        out.push({
+          id: dn.id,
+          name: dn.name,
+          ministerName: dn.ministerName,
+          description: dn.description,
+          hiddenAgenda: dn.hiddenAgenda,
+          avatarId: dn.avatarId,
+        });
+      }
+
+      return LlmDiplomacySchema.parse({ nations: out });
+    };
+
     const { data, raw } = await chatJson({
       system,
       user,
       schemaName: "LlmDiplomacySchema",
-      validate: (obj) => LlmDiplomacySchema.parse(obj),
-      temperature: 0.7,
+      validate: coerceAndValidate,
+      temperature: 0.55,
     });
 
     // Merge with engine state and Deduplicate
