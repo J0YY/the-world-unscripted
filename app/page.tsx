@@ -7,7 +7,7 @@ import { apiCreateGame, apiLatestGame, apiReset, apiSnapshot } from "@/component
 import { clearStoredGame, getStoredGameId, setStoredGameId } from "@/components/storage";
 import { AnimatedNoise } from "@/components/twi2/animated-noise";
 import { BitmapChevron } from "@/components/twi2/bitmap-chevron";
-import { ScrambleTextOnHover } from "@/components/twi2/scramble-text";
+import { ScrambleText, ScrambleTextOnHover } from "@/components/twi2/scramble-text";
 import { SplitFlapAudioProvider, SplitFlapMuteToggle, SplitFlapText } from "@/components/twi2/split-flap-text";
 import type { LandingStep } from "@/components/twi2/hscroll-nav";
 
@@ -411,7 +411,10 @@ export default function LandingPage() {
           <AnimatedNoise opacity={0.04} />
           <div className="px-6 text-center">
             <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Simulation loading</div>
-            <div className="mt-6 font-[var(--font-bebas)] text-5xl md:text-7xl tracking-tight">GENERATING WORLD</div>
+            <div className="mt-6 font-[var(--font-bebas)] text-5xl md:text-7xl tracking-tight flex items-center justify-center gap-2">
+              <ScrambleText text="GENERATING WORLD" duration={1.5} />
+              <span className="w-2 h-12 md:h-16 bg-foreground animate-pulse" />
+            </div>
             <div className="mt-4 font-mono text-xs text-muted-foreground">This can take ~10–20 seconds.</div>
           </div>
         </div>

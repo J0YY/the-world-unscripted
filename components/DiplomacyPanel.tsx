@@ -27,14 +27,6 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
           <Globe className="w-4 h-4" />
           Diplomatic Corps
         </h2>
-        {selectedNation && (
-          <button
-            onClick={() => setSelectedNationId(null)}
-            className="text-xs text-[var(--ds-gray-900)] hover:text-[var(--ds-gray-1000)] hover:underline"
-          >
-            Close Channel
-          </button>
-        )}
       </div>
 
       <div className="flex-1 overflow-hidden relative">
@@ -45,7 +37,7 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -20 }}
-              className="h-full overflow-y-auto p-2 space-y-2"
+              className="h-full overflow-y-auto p-2 space-y-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
             >
               {snapshot.diplomacy.nations.map((nation) => (
                 <button
@@ -180,7 +172,7 @@ function NationChat({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={scrollRef}>
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]" ref={scrollRef}>
         {messages.length === 0 && (
           <div className="text-center mt-10 text-xs text-[var(--ds-gray-500)] italic">
             Secure line established.

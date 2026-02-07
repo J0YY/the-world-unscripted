@@ -386,3 +386,10 @@ export const LlmDiplomacySchema = z.object({
     }),
   ),
 });
+
+export const LlmDiplomacyChatResponseSchema = z.object({
+  reply: z.string().describe("The diplomatic response text (1-2 sentences). MAX 25 words."),
+  trustChange: z.number().int().min(-15).max(15).describe("Change in actor's Trust score (-15 to +15) based on this interaction. Negative if offended, Positive if pleased."),
+  escalationChange: z.number().int().min(-10).max(10).describe("Change in willingness to escalate (-10 to +10). Optional."),
+  generatedHeadline: z.string().optional().describe("A VERY SHORT (max 6 words) global news headline if this interaction causes a public splash (e.g. 'US President snubs player'). Leave empty if private."),
+});

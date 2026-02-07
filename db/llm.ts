@@ -5,6 +5,7 @@ import {
   LlmControlRoomViewSchema,
   LlmCountryProfileSchema,
   LlmDiplomacySchema,
+  LlmDiplomacyChatResponseSchema,
   LlmGenerateTurnPackageSchema,
   LlmParseDirectiveSchema,
   LlmResolutionSchema,
@@ -1402,14 +1403,23 @@ export async function llmGenerateDiplomacy(args: {
       temperature: 0.7,
     });
 
-    // Merge with engine state
-    const nations: ForeignPower[] = data.nations.map((n) => {
+    // Merge with engine state and Deduplicate
+    let nations: ForeignPower[] = data.nations.map((n) => {
       const actor = args.world.actors[n.id as keyof typeof args.world.actors];
       return {
         ...n,
         stance: actor ? actor.trust : 50, // Sync stance with engine trust
         chatHistory: [],
       };
+    });
+
+    // Deduplicate by name (prefer keeping Global powers or first occurrence)
+    // We assume major powers like US, CHINA, RUSSIA, EU should act as the canonical entry if a neighbor has the same name.
+    const seenNames = new Set<string>();
+    nations = nations.filter((n) => {
+      if (seenNames.has(n.name)) return false;
+      seenNames.add(n.name);
+      return true;
     });
 
     return { nations, llmRaw: raw };
@@ -1424,7 +1434,7 @@ export async function llmDiplomacyChat(args: {
   nation: ForeignPower;
   userMessage: string;
   history: Array<{ role: "user" | "minister"; text: string }>;
-}): Promise<string> {
+}): Promise<{ reply: string; trustChange?: number; escalationChange?: number; headline?: string }> {
   // Fallback for AI-Offline mode so chat is always responsive
   if (llmMode() === "OFF") {
       const responses = [
@@ -1434,24 +1444,26 @@ export async function llmDiplomacyChat(args: {
           "Interesting. we will take this into consideration.",
       ];
       // Deterministic pseudo-random pick based on message length
-      return responses[args.userMessage.length % responses.length];
+      return { reply: responses[args.userMessage.length % responses.length] };
   }
 
   const system = [
     "You are " + args.nation.ministerName + ", representing " + args.nation.name + ".",
     "Description: " + args.nation.description,
-    "Your Stance toward player: " + args.nation.stance + "/100.",
+    "Your Stance toward player has a Trust Score of " + args.nation.stance + "/100.",
     "Your Hidden Agenda: " + args.nation.hiddenAgenda,
     "",
     "Instructions:",
-    "- ACT AS A LEADER/PEER: You are the head of your nation, NOT the player's subordinate.",
-    "- Be self-interested. Even if friendly, you always put your nation's needs first.",
-    "- Keep responses short and punchy (1-2 sentences). No fluff.",
-    "- Avoid overly formal headers. This is a direct secure line.",
-    "- Tone: Professional but real. Can be cynical, guarded, or transactional.",
-    "- If Stance is low (<40), be hostile, demanding, or dismissive.",
-    "- If Stance is high (>70), be collaborative but expect reciprocity. Do not be sycophantic.",
-    "- REACT: Use global headlines to verify you are aware of the world state.",
+    "- ACT AS A LEADER/PEER: You are the head of your nation (President/PM), NOT a subordinate.",
+    "- EXTREMELY BRIEF & DIRECT: Responses must be 1-2 SHORT sentences max. Like a secure cable or text.",
+    "- TONE: Casual confidence, authoritative, guarded. No 'diplomatic fluff'.",
+    "- Be self-interested. Even if friendly, you put your nation's needs first.",
+    "- If Stance is low (Trust < 40): Be hostile, dismissive.",
+    "- If Stance is high (Trust > 70): Be collaborative but transactional.",
+    "- UNIQUE VOICE: If you are a neighbor, mention border tensions. If a global power, act like a superpower.",
+    "- IMPACT: Decide if this conversation offends you (Trust decreases) or pleases you (Trust increases).",
+    "- REACT: Mention global headlines if relevant.",
+    "Return JSON with 'reply', 'trustChange', 'escalationChange', and optionally 'generatedHeadline'."
   ].join("\n");
 
   // Providing richer context for "chit chat"
@@ -1470,15 +1482,25 @@ export async function llmDiplomacyChat(args: {
     ...(args.history || []).map((m) => (m.role ? m.role.toUpperCase() + ": " + m.text : "UNKNOWN: " + m.text)),
     "",
     "USER: " + args.userMessage, // Explicitly label user message
-    "MINISTER:", // Prompt for completion
+    "RESPONSE (JSON):", // Prompt for completion
   ].join("\n");
 
   try {
-     const reply = await llmChat({ system, user, temperature: 0.8 });
-     // Sometimes LLMs quote themselves like "Minister: Hello", strip that if present.
-     return reply.replace(/^(Minister|Response):?\s*/i, "").trim();
+     const { data } = await chatJson({
+        system,
+        user,
+        schemaName: "LlmDiplomacyChatResponseSchema",
+        validate: (obj) => LlmDiplomacyChatResponseSchema.parse(obj),
+        temperature: 0.8,
+     });
+     return {
+       reply: data.reply,
+       trustChange: data.trustChange,
+       escalationChange: data.escalationChange,
+       headline: data.generatedHeadline
+     };
   } catch (e) {
      console.error("LLM Chat Failed", e);
-     return "The line is dead. (Connection error)";
+     return { reply: "The line is dead. (Connection error)" };
   }
 }

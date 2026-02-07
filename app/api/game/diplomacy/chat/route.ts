@@ -35,12 +35,14 @@ export async function POST(req: Request) {
     const history = nation.chatHistory || [];
     const world = game.worldState as unknown as WorldState;
 
-    const reply = await llmDiplomacyChat({
+    const result = await llmDiplomacyChat({
       world,
       nation,
       userMessage: message,
       history: history.map((h) => ({ role: h.role as "user" | "minister", text: h.text })),
     });
+
+    const { reply, trustChange, headline } = result;
 
     const newHistory = [
       ...history,
@@ -48,12 +50,46 @@ export async function POST(req: Request) {
       { role: "minister" as const, text: reply, timestamp: Date.now() },
     ];
 
-    // Update
+    // Update UI View
     snapshot.diplomacy.nations[nationIndex].chatHistory = newHistory;
+
+    // Apply World State Impacts (Trust & Headlines)
+    let worldUpdated = false;
+    if (trustChange && trustChange !== 0) {
+        // Find actor in world state (nationId should match actor.id)
+        const actorKey = Object.keys(world.actors).find((k) => world.actors[k as keyof typeof world.actors].id === nationId);
+        if (actorKey) {
+            const actor = world.actors[actorKey as keyof typeof world.actors];
+            const oldTrust = actor.trust;
+            actor.trust = Math.max(0, Math.min(100, actor.trust + trustChange));
+            // Sync local snapshot view
+            snapshot.diplomacy.nations[nationIndex].stance = actor.trust;
+            worldUpdated = true;
+            console.log(`Diplomacy: ${nationId} trust changed ${oldTrust} -> ${actor.trust} (${trustChange})`);
+        }
+    }
+
+    if (headline) {
+        if (!world.current.briefing) {
+             // @ts-ignore
+             world.current.briefing = { headlines: [], intel: [] }; 
+        }
+        world.current.briefing.headlines.unshift(headline);
+        if (world.current.briefing.headlines.length > 6) {
+             world.current.briefing.headlines.pop();
+        }
+        worldUpdated = true;
+        console.log(`Diplomacy: Generated Headline: "${headline}"`);
+    }
+
+    const dataToUpdate: any = { lastPlayerSnapshot: snapshot as unknown as object };
+    if (worldUpdated) {
+        dataToUpdate.worldState = world as unknown as object;
+    }
 
     await prisma.game.update({
       where: { id: gameId },
-      data: { lastPlayerSnapshot: snapshot as unknown as object },
+      data: dataToUpdate,
     });
 
     return NextResponse.json({ reply, history: newHistory });
