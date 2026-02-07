@@ -1066,17 +1066,7 @@ function deriveBriefingFeed(snapshot: GameSnapshot): UiBriefingItem[] {
     });
   }
 
-  // Add top incoming event as an extra note
-  const e0 = snapshot.playerView.incomingEvents[0];
-  if (e0) {
-    items.unshift({
-      id: `evt-${e0.id}`,
-      timestamp: "now",
-      source: "Foreign Desk",
-      content: e0.visibleDescription,
-    });
-  }
-
-  return items.slice(0, 10);
+  // Keep the feed light for demo + latency (LLM hydration). Cap hard.
+  return items.slice(0, 6);
 }
 

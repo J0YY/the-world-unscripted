@@ -57,13 +57,14 @@ export async function apiPressureDelta(
 export async function apiResolutionReport(
   gameId: string,
   turnNumber: number,
-  init?: Pick<RequestInit, "signal"> & { forceLlm?: boolean },
+  init?: Pick<RequestInit, "signal"> & { forceLlm?: boolean; waitMs?: number },
 ): Promise<unknown> {
   const qs = new URLSearchParams({
     gameId: String(gameId),
     turn: String(turnNumber),
   });
   if (init?.forceLlm) qs.set("forceLlm", "1");
+  if (typeof init?.waitMs === "number" && Number.isFinite(init.waitMs) && init.waitMs > 0) qs.set("waitMs", String(Math.round(init.waitMs)));
   return jsonFetch(`/api/game/resolution?${qs.toString()}`, init);
 }
 

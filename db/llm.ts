@@ -9,6 +9,7 @@ import {
   LlmGenerateBriefingDomesticRumorsOnlySchema,
   LlmGenerateBriefingHeadlinesOnlySchema,
   LlmGenerateBriefingIntelBriefsOnlySchema,
+  LlmGenerateBriefingSlimSchema,
   LlmGenerateEventsOnlySchema,
   LlmDiplomacySchema,
   LlmDiplomacyChatResponseSchema,
@@ -558,6 +559,107 @@ function validateBriefingLines(lines: string[], mentionsAny: (s: string) => bool
   const missing = lines.filter((l) => !mentionsAny(String(l)));
   if (missing.length) throw new Error("Briefing too generic: some lines did not mention player/neighbor/actor names from context.");
   if (lines.some((s) => leaksNumbers(String(s)))) throw new Error("LLM output leaked numeric scoring; disabled for this turn");
+}
+
+export async function llmGenerateBriefingSlim(args: {
+  world: WorldState;
+  phase: "TURN_1" | "TURN_N";
+  playerDirective?: string;
+  lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
+}): Promise<{ briefing: WorldState["current"]["briefing"]; llmRaw: unknown }> {
+  const system = [
+    "You are the briefing generator for a grounded geopolitical simulation.",
+    "Tone: Reuters/cabinet memo style; unsentimental and specific.",
+    "Output MUST be strict JSON object only.",
+    "Hard constraints:",
+    "- Do NOT include numeric ratings/scores (no '72/100', no indices).",
+    "- Do NOT mention game mechanics, hidden state, RNG, or internal fields.",
+    "- Every line MUST mention at least one proper noun from context (player country, a neighbor, or a named external actor).",
+    "",
+    "TASK: Generate a FAST 'slim' briefing. EXACTLY 6 items total, with this breakdown:",
+    "- briefing.intelBriefs: exactly 2 items",
+    "- briefing.diplomaticMessages: exactly 1 item",
+    "- briefing.headlines: exactly 2 items",
+    "- briefing.domesticRumors: exactly 1 item",
+    "",
+    "Additional specificity rules:",
+    "- At least 2 of the 6 items must mention a neighbor by name.",
+    "- At least 2 of the 6 items must mention a named external actor by name.",
+    "- Tie at least 2 items causally to LAST_TURN_PUBLIC_RESOLUTION / RECENT_TURNS_MEMORY.",
+    "",
+    "OUTPUT: Return JSON with key 'briefing' ONLY.",
+  ].join("\n");
+
+  const { userContext, mentionsAny } = buildTurnStartUserContext(args);
+  const context = summarizeWorldForLlm(args.world);
+
+  const validate = (obj: unknown) => {
+    const parsed = LlmGenerateBriefingSlimSchema.parse(obj);
+    if (leaksNumbers(parsed.briefing.text)) throw new Error("LLM briefing leaked numeric scoring; disabled for this turn");
+
+    const allLines: string[] = [
+      ...parsed.briefing.headlines,
+      ...parsed.briefing.domesticRumors,
+      ...parsed.briefing.diplomaticMessages,
+      ...parsed.briefing.intelBriefs.map((b) => b.text),
+    ];
+    validateBriefingLines(allLines, mentionsAny);
+
+    const neighbors = Array.isArray(context.player.neighbors) ? context.player.neighbors : [];
+    const neighborMentions = allLines.filter((l) => neighbors.some((n) => String(l).toLowerCase().includes(String(n).toLowerCase())));
+    if (neighbors.length && neighborMentions.length < 2) {
+      throw new Error("Briefing missing neighbor-specific items (need >=2 neighbor mentions).");
+    }
+    const actorNames = Array.isArray(context.actors) ? context.actors.map((a) => a.name) : [];
+    const actorMentions = allLines.filter((l) => actorNames.some((n) => String(l).toLowerCase().includes(String(n).toLowerCase())));
+    if (actorNames.length && actorMentions.length < 2) {
+      throw new Error("Briefing missing actor-specific items (need >=2 external actor mentions).");
+    }
+
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  const temps = [0.65, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : ["", "REPAIR MODE:", "Regenerate with more specificity; keep EXACT item counts.", lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : ""].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user: [
+          userContext,
+          "Return JSON matching this shape (exact lengths matter):",
+          JSON.stringify(
+            {
+              briefing: {
+                text: "string",
+                headlines: ["string", "string"],
+                domesticRumors: ["string"],
+                diplomaticMessages: ["string"],
+                intelBriefs: [
+                  { text: "string", confidence: "low|med|high" },
+                  { text: "string", confidence: "low|med|high" },
+                ],
+              },
+            },
+            null,
+            2,
+          ),
+        ].join("\n"),
+        schemaName: attempt === 0 ? "LlmGenerateBriefingSlimSchema" : `LlmGenerateBriefingSlimSchema_retry_${attempt}`,
+        validate,
+        temperature: temps[attempt] ?? 0.5,
+      });
+      return { briefing: data.briefing as unknown as WorldState["current"]["briefing"], llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM slim briefing failed");
 }
 
 export async function llmGenerateBriefingHeadlinesOnly(args: {
@@ -1293,6 +1395,40 @@ export async function llmGenerateResolution(args: {
   // directly from the player's directive + world context.
   const actionsForLlm = args.translatedActions.map((a) => a.summary).slice(0, 6);
 
+  const deltaMagnitude = (d: number): "tiny" | "small" | "medium" | "large" => {
+    const a = Math.abs(d);
+    if (a >= 12) return "large";
+    if (a >= 7) return "medium";
+    if (a >= 3) return "small";
+    return "tiny";
+  };
+  const deltasQual = args.deltas
+    .map((d) => ({
+      label: d.label,
+      direction: d.delta > 0 ? "up" : d.delta < 0 ? "down" : "flat",
+      magnitude: deltaMagnitude(d.delta),
+    }))
+    .filter((d) => d.direction !== "flat")
+    .slice(0, 8);
+
+  const actorShiftsQual = args.actorShifts.slice(0, 6).map((s) => ({
+    actor: s.actor,
+    posture: s.posture,
+    trustShift: s.trustDelta > 0 ? "up" : s.trustDelta < 0 ? "down" : "flat",
+    escalationShift: s.escalationDelta > 0 ? "up" : s.escalationDelta < 0 ? "down" : "flat",
+  }));
+
+  const ctxBefore = summarizeWorldForLlm(args.worldBefore);
+  const ctxAfter = summarizeWorldForLlm(args.worldAfter);
+  const worldCompact = {
+    player: ctxAfter.player,
+    global: ctxAfter.global,
+    conflicts: Array.isArray(ctxAfter.conflicts) ? ctxAfter.conflicts.slice(0, 3) : [],
+    actors: Array.isArray(ctxAfter.actors) ? ctxAfter.actors.slice(0, 8).map((a) => ({ name: a.name, posture: a.posture, trust: a.trust })) : [],
+    // Keep one "before" anchor to explain causality without huge dumps.
+    before: { global: ctxBefore.global, player: { economy: ctxBefore.player.economy, politics: ctxBefore.player.politics } },
+  };
+
   const system = [
     "You write the end-of-turn resolution briefing for a geopolitical simulation.",
     "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
@@ -1300,7 +1436,6 @@ export async function llmGenerateResolution(args: {
     "PRIMARY OBJECTIVE: respond to the PLAYER_DIRECTIVE as if it were pasted into ChatGPT, but in-world and after-action (state what happened, with concrete details).",
     "The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests) and say what happened for each.",
     "You MUST cover every item in DIRECTIVE_INTENTS somewhere in the narrative (verbatim or close paraphrase).",
-    "Be concrete and decisive. Avoid hedging words like 'may', 'might', 'could', 'likely' anywhere (including forecasts). Use firm projections ('will', 'expect', 'is set to') instead.",
     "Do NOT reveal internal raw state dumps.",
     "DO NOT mention any internal action classifications, enum names, or parameters (no 'LIMITED_STRIKE', no 'MOBILIZE', no 'intensity').",
     "DO NOT mention scores, indices, deltas, or any numeric rating changes in the narrative. Keep it in-world.",
@@ -1308,8 +1443,7 @@ export async function llmGenerateResolution(args: {
     "Do not use game-y button language like 'public/private', 'limited strike', or 'mobilization' as labels. Describe concrete actions (what moved, what was hit, what was announced, what was denied).",
     "Your narrative must state what happened, who escalated/de-escalated, what failed/held, and at least one political 'fall' (cabinet collapse, minister resignation, command shake-up, government crisis) IF domestic unrest/legitimacy worsened in the hidden guidance.",
     "If there was no sustained ground campaign, do NOT claim an entire country 'fell'. Instead describe partial collapses (local authority breakdown, party fracture, minister ouster, security services shake-up).",
-    "Include at least 2 named places (cities, border crossings, ports, bases) relevant to the involved countries, and at least 2 external actors by name from PERCEPTIONS/THREATS.",
-    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_CONTEXT_BEFORE/AFTER and the directive.",
+    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_COMPACT and the directive.",
     "CRITICAL CONSISTENCY: Do NOT invent strikes/invasions/mobilizations unless a MILITARY action was executed this turn.",
     "If COALITION_PARTNERS is non-empty, you MUST explicitly mention at least one partner by name in the resolved-events portion and show what coordination occurred (liaison, deconfliction, joint messaging, basing, logistics).",
     "If outcomes look counterintuitive, explain causality (timing lags, second-order effects, credibility costs) in-world.",
@@ -1341,23 +1475,17 @@ export async function llmGenerateResolution(args: {
     "ENGINE_ACTION_SUMMARIES (hidden grounding only; do NOT echo verbatim; directive is primary):",
     JSON.stringify(actionsForLlm, null, 2),
     "",
-    "ACTIONS_RAW (authoritative grounding; do not quote enum labels; do not let this override the directive):",
-    JSON.stringify(args.translatedActions, null, 2),
-    "",
-    "SCORE_DELTAS (hidden guidance; do NOT quote numbers in narrative):",
-    JSON.stringify(args.deltas, null, 2),
+    "WORLD_DELTAS_QUALITATIVE (hidden guidance; do NOT quote numbers in narrative):",
+    JSON.stringify(deltasQual, null, 2),
     "",
     "ACTOR_SHIFTS (perceptions):",
-    JSON.stringify(args.actorShifts, null, 2),
+    JSON.stringify(actorShiftsQual, null, 2),
     "",
     "TOP_THREATS (derived):",
     JSON.stringify(args.threats, null, 2),
     "",
-    "WORLD_CONTEXT_BEFORE (qualitative summary):",
-    JSON.stringify(summarizeWorldForLlm(args.worldBefore), null, 2),
-    "",
-    "WORLD_CONTEXT_AFTER (qualitative summary):",
-    JSON.stringify(summarizeWorldForLlm(args.worldAfter), null, 2),
+    "WORLD_COMPACT (qualitative summary; do NOT dump raw numbers):",
+    JSON.stringify(worldCompact, null, 2),
     "",
     "Return JSON matching this shape:",
     JSON.stringify(
@@ -1442,13 +1570,70 @@ export async function llmGenerateResolution(args: {
       })
       .filter(Boolean) as Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }>;
 
+    const padDirectiveImpact = (
+      items: Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }>,
+    ): Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }> => {
+      const out = items.slice(0, 8);
+      const intents = directiveIntents.length
+        ? directiveIntents
+        : args.directive?.trim()
+          ? [args.directive.trim().slice(0, 120)]
+          : ["Directive execution"];
+      const fallbackEffects = [
+        "Execution moved into motion; second-order consequences will land over the next weeks.",
+        "Implementation produced immediate political and security blowback; diplomatic channels are reacting.",
+      ];
+      let i = 0;
+      while (out.length < 2 && i < intents.length) {
+        const frag = String(intents[i] ?? "").trim().slice(0, 120);
+        if (frag) out.push({ directiveFragment: frag, translatedOps: [], observedEffects: [fallbackEffects[out.length] ?? fallbackEffects[0]!] });
+        i++;
+      }
+      while (out.length < 2) {
+        out.push({ directiveFragment: "Directive execution", translatedOps: [], observedEffects: [fallbackEffects[out.length] ?? fallbackEffects[0]!] });
+      }
+      return out.slice(0, 8);
+    };
+
+    const padPerceptions = (
+      items: Array<{ actor: string; posture: "hostile" | "neutral" | "friendly"; read: string }>,
+    ): Array<{ actor: string; posture: "hostile" | "neutral" | "friendly"; read: string }> => {
+      const out = items.slice(0, 8);
+      const fallback = actorShiftsQual
+        .filter((s) => s.actor && s.actor !== "—")
+        .slice(0, 4)
+        .map((s) => {
+          const posture = (String(s.posture).toLowerCase() as "hostile" | "neutral" | "friendly") || "neutral";
+          const read = `${s.actor}: posture ${posture}; trust ${s.trustShift}, escalation ${s.escalationShift}.`;
+          return { actor: String(s.actor).slice(0, 40), posture, read: read.slice(0, 160) };
+        });
+      for (const p of fallback) {
+        if (out.length >= 2) break;
+        out.push(p);
+      }
+      while (out.length < 2) {
+        out.push({ actor: "—", posture: "neutral", read: "External posture remains fluid; diplomatic channels are recalibrating." });
+      }
+      return out.slice(0, 8);
+    };
+
+    const padMin2 = (arr: string[], fallbacks: string[]) => {
+      const out = arr.filter(Boolean).slice(0, 8);
+      for (const f of fallbacks) {
+        if (out.length >= 2) break;
+        if (!out.includes(f)) out.push(f);
+      }
+      while (out.length < 2) out.push(fallbacks[out.length] ?? fallbacks[0]!);
+      return out.slice(0, 8);
+    };
+
     const normalized = {
       headline: safeStr(o.headline, 160),
       narrative,
-      directiveImpact,
-      perceptions,
-      threats: safeStrArr(o.threats, 7, 180),
-      nextMoves: safeStrArr(o.nextMoves, 6, 200),
+      directiveImpact: padDirectiveImpact(directiveImpact),
+      perceptions: padPerceptions(perceptions),
+      threats: padMin2(safeStrArr(o.threats, 7, 180), ["Domestic backlash risk", "Sanctions/financial squeeze risk", "Escalation miscalculation risk"]),
+      nextMoves: padMin2(safeStrArr(o.nextMoves, 6, 200), ["Stabilize internal security posture and critical supply lines.", "Open a backchannel to contain escalation and manage sanctions risk."]),
     };
 
     const parsed = LlmResolutionSchema.parse(normalized);
@@ -1475,7 +1660,7 @@ export async function llmGenerateResolution(args: {
   };
 
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const extra =
         attempt === 0
@@ -1493,7 +1678,7 @@ export async function llmGenerateResolution(args: {
         user,
         schemaName: attempt === 0 ? "LlmResolutionSchema" : "LlmResolutionSchema_retry",
         validate: validateResolution,
-        temperature: attempt === 0 ? 0.45 : attempt === 1 ? 0.25 : 0.15,
+        temperature: attempt === 0 ? 0.35 : 0.2,
       });
       return { data: out.data, llmRaw: out.raw };
     } catch (e) {

@@ -14,10 +14,14 @@ export function PromptConsole({
   gameId: string;
   llmMode?: "ON" | "OFF";
   snapshot: GameSnapshot;
-  onSubmitDirective: (directive: string) => Promise<void>;
+  onSubmitDirective: (
+    directive: string,
+    onProgress?: (p: { completed: number; total: number; label: string }) => void,
+  ) => Promise<void>;
 }) {
   const [directive, setDirective] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number; label: string } | null>(null);
   const [heightVh, setHeightVh] = useState<number>(() => {
     if (typeof window === "undefined") return 22;
     const raw = window.localStorage.getItem("twuo:commandDeckHeightVh");
@@ -45,11 +49,25 @@ export function PromptConsole({
   async function submit() {
     if (!directive.trim() || submitting) return;
     setSubmitting(true);
+    setProgress({ completed: 0, total: 2, label: "Submitting…" });
+    let done = false;
     try {
-      await onSubmitDirective(directive.trim());
+      await onSubmitDirective(directive.trim(), (p) => {
+        setProgress(p);
+        if (p.total > 0 && p.completed >= p.total) done = true;
+      });
       setDirective("");
+
+      // Keep the overlay up briefly until progress reaches completion,
+      // since some work continues asynchronously (hydration polling).
+      const startedAt = Date.now();
+      const maxWaitMs = 18_000;
+      while (!done && Date.now() - startedAt < maxWaitMs) {
+        await new Promise((r) => setTimeout(r, 120));
+      }
     } finally {
       setSubmitting(false);
+      setProgress(null);
     }
   }
 
@@ -126,30 +144,31 @@ export function PromptConsole({
           aria-live="polite"
         >
           <div className="w-full max-w-xl px-6">
-            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/60">Resolving turn</div>
-            <div className="mt-4 text-4xl font-semibold text-white">GENERATING OUTCOME</div>
-            <motion.ul
-              className="mt-5 space-y-2 text-sm text-white/80 font-mono"
-              initial="hidden"
-              animate="show"
-              variants={{ hidden: {}, show: { transition: { staggerChildren: 0.12 } } }}
-            >
-              {[
-                "Interpreting directive…",
-                "Selecting operations…",
-                "Applying second-order effects…",
-                "Updating perceptions…",
-                "Compiling brief…",
-              ].map((t) => (
-                <motion.li key={t} variants={{ hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0 } }}>
-                  - {t}
-                </motion.li>
-              ))}
-            </motion.ul>
-            <div className="mt-6 h-1 w-full bg-white/10 rounded overflow-hidden">
-              <div className="h-full w-1/3 bg-white/60 animate-pulse" />
+            <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/60">Generating brief</div>
+            <div className="mt-4 text-4xl font-semibold text-white">WORKING…</div>
+
+            <div className="mt-5 text-sm text-white/80 font-mono">
+              {progress?.label ?? "Working…"}
+              {progress?.total ? (
+                <span className="text-white/50">{`  (${Math.min(progress.completed, progress.total)}/${progress.total})`}</span>
+              ) : null}
             </div>
-            <div className="mt-3 text-xs text-white/50 font-mono">This can take ~10–20 seconds when AI is online.</div>
+
+            <div className="mt-4 h-1 w-full bg-white/10 rounded overflow-hidden">
+              <motion.div
+                className="h-full bg-white/70"
+                initial={false}
+                animate={{
+                  width: `${
+                    progress && progress.total
+                      ? Math.max(6, Math.min(100, Math.round((Math.min(progress.completed, progress.total) / progress.total) * 100)))
+                      : 40
+                  }%`,
+                }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+              />
+            </div>
+            <div className="mt-3 text-xs text-white/50 font-mono">{llmMode === "ON" ? "AI online: brief hydrates in background." : "AI offline."}</div>
           </div>
         </motion.div>
       ) : null}

@@ -151,6 +151,25 @@ export const LlmGenerateBriefingOnlySchema = z.object({
   briefing: LlmBriefingSchema,
 });
 
+// "Slim" briefing: exactly 6 items total. This is for fast turn-start hydration.
+// 2 intercepts + 1 embassy cable + 2 headlines + 1 domestic rumor = 6
+export const LlmBriefingSlimSchema = z.object({
+  text: z.string().min(40).max(2500),
+  headlines: z.array(z.string().min(10).max(220)).length(2),
+  domesticRumors: z.array(z.string().min(10).max(220)).length(1),
+  diplomaticMessages: z.array(z.string().min(10).max(260)).length(1),
+  intelBriefs: z.array(
+    z.object({
+      text: z.string().min(10).max(380),
+      confidence: z.enum(["low", "med", "high"]),
+    }),
+  ).length(2),
+});
+
+export const LlmGenerateBriefingSlimSchema = z.object({
+  briefing: LlmBriefingSlimSchema,
+});
+
 export const LlmGenerateEventsOnlySchema = z.object({
   events: LlmEventsSchema,
 });

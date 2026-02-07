@@ -19,6 +19,8 @@ type ResolutionReport = {
   actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
   threats: string[];
   llm?: { headline?: string; narrative?: string[] };
+  llmPending?: boolean;
+  llmError?: string;
 };
 
 function isBadWhenHigh(label: string): boolean {
@@ -74,11 +76,14 @@ export default function AfterActionModal({
       // Only trust the LLM narrative if it has substance; otherwise fall back to deterministic.
       if (llmLines.length >= 2) return [...openingLines, ...llmLines].slice(0, 18);
     }
-    // When AI is ON, do not show the deterministic "field brief" while waiting.
-    if (llmMode === "ON") return [];
+    // When AI is ON, do not show the deterministic "field brief" while waiting —
+    // unless we have a concrete AI error, in which case we fall back so the modal isn't blank.
+    const llmErr = typeof report?.llmError === "string" ? report.llmError.trim() : "";
+    if (llmMode === "ON" && !llmErr) return [...openingLines, "(Generating report…)"];
     // Deterministic fallback: still "dynamic" per-turn because it's synthesized from
     // the executed actions + true deltas + consequences, not a static template block.
     const lines: string[] = [...openingLines];
+    if (llmErr) lines.push(`(AI error: ${llmErr})`);
     const turn = outcome.turnResolved;
     lines.push(`TURN ${turn} // FIELD BRIEF`);
 
@@ -155,22 +160,48 @@ export default function AfterActionModal({
   useEffect(() => {
     if (!open) return;
     if (!outcome) return;
-    // When AI is ON, block on the full AI brief (no deterministic filler shown).
     const ac = new AbortController();
     const wantAi = llmMode === "ON";
-    const t = setTimeout(() => ac.abort(), wantAi ? 90_000 : 10_000);
-    apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal, forceLlm: wantAi })
-      .then((r) => setReport(r as ResolutionReport))
-      .catch((e) => {
+    let cancelled = false;
+    const deadlineMs = wantAi ? 30_000 : 10_000;
+    const t = setTimeout(() => ac.abort(), deadlineMs);
+
+    void (async () => {
+      try {
+        // Single long-poll-ish request (server waits up to ~12s for AI narrative).
+        const first = (await apiResolutionReport(gameId, outcome.turnResolved, {
+          signal: ac.signal,
+          forceLlm: wantAi,
+          waitMs: wantAi ? 12_000 : 0,
+        })) as ResolutionReport;
+        if (cancelled) return;
+        setReport(first);
+
+        if (!wantAi) return;
+        const err1 = typeof first?.llmError === "string" ? first.llmError.trim() : "";
+        if (err1) return;
+        const llmLines1 = Array.isArray(first?.llm?.narrative)
+          ? first.llm!.narrative!.map((s) => (typeof s === "string" ? s.trim() : "")).filter(Boolean)
+          : [];
+        if (llmLines1.length >= 2) return;
+
+        // One retry after a short pause (covers "generation finished right after the wait window").
+        await new Promise((r) => setTimeout(r, 1400));
+        const second = (await apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal, waitMs: 12_000 })) as ResolutionReport;
+        if (cancelled) return;
+        setReport(second);
+      } catch (e) {
         if ((e as Error).name === "AbortError") return;
         setBaseErr((e as Error).message);
-      })
-      .finally(() => clearTimeout(t));
+      }
+    })();
+
     return () => {
       clearTimeout(t);
+      cancelled = true;
       ac.abort();
     };
-  }, [open, gameId, outcome, llmMode]);
+  }, [open, gameId, outcome?.turnResolved, llmMode]);
 
   const hasCritical = criticalBreaches.length > 0;
   const autoGameOver = criticalBreaches.length >= 2;
