@@ -7,8 +7,9 @@ export default function GlobalAudioShell({ children }: { children: React.ReactNo
   return (
     <SplitFlapAudioProvider>
       {children}
-      <div className="fixed top-4 left-4 z-[1000] pointer-events-auto">
-        <div className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/70 backdrop-blur px-2 py-1">
+      {/* Top-right HUD: keep this left of the AI pill (which sits at top-right). */}
+      <div className="fixed top-4 right-4 z-[1000] pointer-events-auto -translate-x-[120px]">
+        <div className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/35 backdrop-blur-md px-2 py-1">
           <SplitFlapMuteToggle className="text-[10px]" />
         </div>
       </div>
