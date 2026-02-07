@@ -349,7 +349,7 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
 
   // Optional LLM generation for Turn 1 briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
-  if (!fastMode() && llmMode() === "ON") {
+  if (llmMode() === "ON") {
     try {
       const pkg = await llmGenerateTurnPackage({ world, phase: "TURN_1" });
       world.current.briefing = pkg.briefing;
@@ -579,13 +579,19 @@ export async function submitTurn(
 
   // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
-  if (!fastMode() && !outcome.failure && llmMode() === "ON") {
+  if (!outcome.failure && llmMode() === "ON") {
     try {
+      const recent = await prisma.turnLog.findMany({
+        where: { gameId },
+        orderBy: { turnNumber: "desc" },
+        take: 3,
+      });
       const pkg = await llmGenerateTurnPackage({
         world: nextWorld,
         phase: "TURN_N",
         playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
         lastTurnPublicResolution: outcome.publicResolutionText,
+        memory: recent.map((r) => ({ turn: r.turnNumber, directive: r.playerDirective ?? null, publicResolution: r.publicResolution ?? null })).reverse(),
       });
       nextWorld.current.briefing = pkg.briefing;
       nextWorld.current.incomingEvents = pkg.events;

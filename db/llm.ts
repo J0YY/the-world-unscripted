@@ -268,12 +268,19 @@ export async function llmGenerateTurnPackage(args: {
   phase: "TURN_1" | "TURN_N";
   playerDirective?: string;
   lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
 }): Promise<{ briefing: WorldState["current"]["briefing"]; events: IncomingEvent[]; llmRaw: unknown }> {
   const system = [
     "You are the turn generator for a grounded geopolitical simulation.",
     "Tone: unsentimental, Reuters/cabinet memo style, operational language.",
     "Output MUST be strict JSON object only.",
     "You must generate: briefing + 2-5 incoming events.",
+    "NON-NEGOTIABLE SPECIFICITY:",
+    "- Every item in briefing.headlines, briefing.domesticRumors, briefing.diplomaticMessages, and briefing.intelBriefs[].text MUST mention at least one specific proper noun from the provided context: the player country name, a named neighbor, or a named external actor.",
+    "- At least 2 items must mention a neighbor by name.",
+    "- At least 2 items must mention an external actor by name AND reflect their posture toward the player (friendly/neutral/hostile) using the context buckets.",
+    "- Tie items to what happened last turn: reference LAST_TURN_PUBLIC_RESOLUTION and RECENT_TURNS_MEMORY as causal background (without quoting scores).",
+    "- Avoid generic filler like 'price controls are being discussed' unless you name the institution/actor pushing it (central bank, finance ministry, ruling party caucus, major importer, port authority, etc.).",
     "Hard constraints:",
     "- Include at least 1 international development, 1 domestic development, and 1 intelligence note with uncertainty.",
     "- Do NOT include any numeric ratings/scores (no '72/100', no indices). Use qualitative buckets only: critical/low/moderate/high.",
@@ -283,10 +290,12 @@ export async function llmGenerateTurnPackage(args: {
   ].join("\n");
 
   const context = summarizeWorldForLlm(args.world);
+  const memory = Array.isArray(args.memory) ? args.memory.slice(-3) : [];
   const user = [
     `PHASE: ${args.phase}`,
     args.playerDirective ? `PLAYER_DIRECTIVE: ${args.playerDirective}` : "PLAYER_DIRECTIVE: (none)",
     args.lastTurnPublicResolution ? `LAST_TURN_PUBLIC_RESOLUTION:\n${args.lastTurnPublicResolution}` : "",
+    memory.length ? `RECENT_TURNS_MEMORY:\n${JSON.stringify(memory, null, 2)}` : "RECENT_TURNS_MEMORY: []",
     "",
     "CONTEXT (qualitative only; do not invent numeric scores):",
     JSON.stringify(context, null, 2),
@@ -318,37 +327,96 @@ export async function llmGenerateTurnPackage(args: {
     ),
   ].join("\n");
 
-  const { data, raw } = await chatJson({
-    system,
-    user,
-    schemaName: "LlmGenerateTurnPackageSchema",
-    validate: (obj) => LlmGenerateTurnPackageSchema.parse(obj),
-    temperature: 0.85,
-  });
+  const names = [
+    context.player.name,
+    ...(Array.isArray(context.player.neighbors) ? context.player.neighbors : []),
+    ...(Array.isArray(context.actors) ? context.actors.map((a) => a.name) : []),
+  ]
+    .filter((x) => typeof x === "string")
+    .map((s) => String(s).trim())
+    .filter(Boolean)
+    .slice(0, 24);
 
-  // Safety: fail closed if model leaks obvious numeric truth patterns into player-visible text.
-  if (leaksNumbers(data.briefing.text)) throw new Error("LLM briefing leaked numeric scoring; disabled for this turn");
+  const mentionsAny = (s: string) => {
+    const t = s.toLowerCase();
+    return names.some((n) => n.length >= 3 && t.includes(n.toLowerCase()));
+  };
 
-  const turn = args.world.turn;
-  const events: IncomingEvent[] = data.events.map((e, idx) => ({
-    id: `T${turn}-E${idx}-LLM-${e.type}`,
-    type: e.type as IncomingEvent["type"],
-    actor: e.actor as IncomingEvent["actor"],
-    urgency: e.urgency,
-    visibleDescription: e.visibleDescription,
-    playerChoicesHints: e.playerChoicesHints,
-    hiddenPayload: {
-      effects: e.effects as IncomingEvent["hiddenPayload"]["effects"],
-      scheduled: (e.scheduled ?? []).map((s, j) => ({
-        id: `T${turn}-SC${idx}-${j}-${s.kind}`,
-        dueTurn: turn + s.dueInTurns,
-        kind: s.kind,
-        payload: s.payload ?? {},
-      })),
-    },
-  }));
+  const validateTurnPkg = (obj: unknown) => {
+    const parsed = LlmGenerateTurnPackageSchema.parse(obj);
+    // Safety: fail closed if model leaks obvious numeric truth patterns into player-visible text.
+    if (leaksNumbers(parsed.briefing.text)) throw new Error("LLM briefing leaked numeric scoring; disabled for this turn");
 
-  return { briefing: data.briefing, events, llmRaw: raw };
+    const allLines: string[] = [
+      ...parsed.briefing.headlines,
+      ...parsed.briefing.domesticRumors,
+      ...parsed.briefing.diplomaticMessages,
+      ...parsed.briefing.intelBriefs.map((b) => b.text),
+    ];
+    const missing = allLines.filter((l) => !mentionsAny(String(l)));
+    if (missing.length) {
+      throw new Error("Briefing too generic: some lines did not mention player/neighbor/actor names from context.");
+    }
+    const neighbors = Array.isArray(context.player.neighbors) ? context.player.neighbors : [];
+    const neighborMentions = allLines.filter((l) => neighbors.some((n) => String(l).toLowerCase().includes(String(n).toLowerCase())));
+    if (neighbors.length && neighborMentions.length < 2) {
+      throw new Error("Briefing missing neighbor-specific items (need >=2 neighbor mentions).");
+    }
+    const actorNames = Array.isArray(context.actors) ? context.actors.map((a) => a.name) : [];
+    const actorMentions = allLines.filter((l) => actorNames.some((n) => String(l).toLowerCase().includes(String(n).toLowerCase())));
+    if (actorNames.length && actorMentions.length < 2) {
+      throw new Error("Briefing missing actor-specific items (need >=2 external actor mentions).");
+    }
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : [
+              "",
+              "REPAIR MODE:",
+              "Your previous output was rejected for being too generic.",
+              "Regenerate the ENTIRE JSON, keeping the same schema, but ensure every line contains specific names from context.",
+              lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : "",
+            ].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user,
+        schemaName: attempt === 0 ? "LlmGenerateTurnPackageSchema" : "LlmGenerateTurnPackageSchema_retry",
+        validate: validateTurnPkg,
+        temperature: attempt === 0 ? 0.85 : 0.55,
+      });
+
+      const turn = args.world.turn;
+      const events: IncomingEvent[] = data.events.map((e, idx) => ({
+        id: `T${turn}-E${idx}-LLM-${e.type}`,
+        type: e.type as IncomingEvent["type"],
+        actor: e.actor as IncomingEvent["actor"],
+        urgency: e.urgency,
+        visibleDescription: e.visibleDescription,
+        playerChoicesHints: e.playerChoicesHints,
+        hiddenPayload: {
+          effects: e.effects as IncomingEvent["hiddenPayload"]["effects"],
+          scheduled: (e.scheduled ?? []).map((s, j) => ({
+            id: `T${turn}-SC${idx}-${j}-${s.kind}`,
+            dueTurn: turn + s.dueInTurns,
+            kind: s.kind,
+            payload: s.payload ?? {},
+          })),
+        },
+      }));
+
+      return { briefing: data.briefing, events, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM turn package failed");
+
 }
 
 export async function llmParsePlayerDirective(args: {
