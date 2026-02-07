@@ -377,6 +377,9 @@ export async function llmParsePlayerDirective(args: {
     "  Use REGIONAL_1/REGIONAL_2 as proxies for local partners unless an explicit actor id is mentioned; include the named countries verbatim in your rationale strings.",
     "- CRITICAL: Do NOT choose any MILITARY action unless the directive contains an explicit kinetic/force verb (attack, strike, bomb, invade, annex, occupy, seize, conquer, war) OR an explicit force-prep verb (mobilize, deploy troops, call up reserves, defensive posture).",
     "  Phrases like 'territorial gain', 'secure leverage', 'pressure them', or 'be strong' are NOT sufficient to justify a strike/invasion. Map those to diplomacy/intel/institutions instead.",
+    "- If the directive asks for investment/FDI/tech sector deals with a named major power (e.g., China), include ECONOMY: TRADE_DEAL_ATTEMPT with targetActor set to that actor when possible.",
+    "- If the directive asks to spy/surveil/infiltrate a named country that is not an actor id, still choose INTEL (SURVEILLANCE or COVERT_OP) and mention the country name in rationale.",
+    "- If the directive offers intel/tradecraft to a counterpart (e.g., 'offer to spy on India' to China), model it as DIPLOMACY: OFFER with topic=intel to that counterpart, plus an INTEL action if slots allow.",
   ].join("\n");
 
   const system = [
@@ -765,6 +768,24 @@ export async function llmGenerateResolution(args: {
 
   const coalitionPartners = args.directive ? extractCoalitionPartners(args.directive) : [];
 
+  const extractDirectiveIntents = (directive: string) => {
+    const d = String(directive || "").trim();
+    if (!d) return [];
+    const parts = d
+      .split(/\n|;|,|\band then\b|\bthen\b/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const picked: string[] = [];
+    for (const p of parts) {
+      if (picked.length >= 4) break;
+      const short = p.length > 140 ? p.slice(0, 140) : p;
+      picked.push(short);
+    }
+    return picked.length ? picked : [d.slice(0, 140)];
+  };
+
+  const directiveIntents = args.directive ? extractDirectiveIntents(args.directive) : [];
+
   const isBadWhenHighLabel = (label: string) => {
     const l = String(label || "").toLowerCase();
     return (
@@ -831,6 +852,8 @@ export async function llmGenerateResolution(args: {
     "You write the end-of-turn resolution briefing for a geopolitical simulation.",
     "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
     "Write like a classified after-action memo: specific, operational, grounded. No fantasy.",
+    "PRIMARY OBJECTIVE: directly address the player's directive. The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests).",
+    "You MUST cover every item in DIRECTIVE_INTENTS somewhere in the narrative (verbatim or close paraphrase).",
     "Be concrete and decisive. Avoid hedging words like 'may', 'might', 'could', 'likely' anywhere (including forecasts). Use firm projections ('will', 'expect', 'is set to') instead.",
     "Do NOT reveal internal raw state dumps.",
     "DO NOT mention any internal action classifications, enum names, or parameters (no 'LIMITED_STRIKE', no 'MOBILIZE', no 'intensity').",
@@ -864,6 +887,9 @@ export async function llmGenerateResolution(args: {
     "",
     "COALITION_PARTNERS (if any; treat as real actors involved this turn):",
     JSON.stringify(coalitionPartners, null, 2),
+    "",
+    "DIRECTIVE_INTENTS (must be explicitly addressed):",
+    JSON.stringify(directiveIntents, null, 2),
     "",
     "ACTIONS_TAKEN_THIS_TURN (in-world paraphrase; treat as fact for the resolved events):",
     JSON.stringify(actionsForLlm, null, 2),

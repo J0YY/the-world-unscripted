@@ -7,6 +7,7 @@ import type { MapMode } from "./types";
 import { deriveGpf } from "./adapters";
 import WorldPressure from "./WorldPressure";
 import HotspotList from "./HotspotList";
+import TurnDeltasPanel from "./TurnDeltasPanel";
 import LayerToggle from "./LayerToggle";
 import SignalsStrip from "./SignalsStrip";
 import BriefingFeed from "./BriefingFeed";
@@ -128,7 +129,7 @@ export default function GlobalPressureFieldPage({
             />
           </div>
           <div id="gpf-hotspots">
-            <HotspotList mode={mode} hotspots={derived.hotspots} />
+            {mode === "world-events" ? <TurnDeltasPanel snapshot={snapshot} /> : <HotspotList mode={mode} hotspots={derived.hotspots} />}
           </div>
           <div id="gpf-intel">
             <IntelChatbot llmMode={snapshot.llmMode} />
