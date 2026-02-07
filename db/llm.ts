@@ -18,6 +18,7 @@ import {
   LlmRewriteTurnSchema,
   LlmSuggestDirectiveSchema,
   LlmWorldGenScenarioSchema,
+  LlmInterrogationSchema,
 } from "./llmSchemas";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
@@ -2219,5 +2220,75 @@ export async function llmDiplomacyChat(args: {
   } catch (e) {
      console.error("LLM Chat Failed", e);
      return { reply: "The line is dead. (Connection error)" };
+  }
+}
+
+export async function llmInterrogationChat(args: {
+  targetCountry: string;
+  userMessage: string;
+  currentPressure: number;
+  currentProgress: number;
+}): Promise<{ reply: string; pressureDelta: number; progressDelta: number; isBroken: boolean }> {
+  // Fallback for AI-Offline mode
+  if (llmMode() === "OFF") {
+      const responses = [
+          "I won't tell you anything.",
+          "You can't break me.",
+          "...",
+          "My government will come for me.",
+      ];
+      return { 
+        reply: responses[Math.floor(Math.random() * responses.length)], 
+        pressureDelta: 5, 
+        progressDelta: 0, 
+        isBroken: false 
+      };
+  }
+
+  const system = [
+    "You are a captured intelligence operative from " + args.targetCountry + ".",
+    "You are currently being detained and interrogated in a high-security facility.",
+    "Current Stress Level: " + args.currentPressure + "/100.",
+    "Current Intel Revealed: " + args.currentProgress + "/100.",
+    "",
+    "ROLEPLAY INSTRUCTIONS:",
+    "- Be resistant but realistic. You are a trained spy, but not a robot. You crack under pressure.",
+    "- If Stress is < 25: Be defiant, arrogant, or mock the interrogator. (progressDelta: 0-5).",
+    "- If Stress is 25-60: You are rattled. You start slipping. Leak small, vague details. (progressDelta: 15-25).",
+    "- If Stress is 60-90: You are breaking. You plead, bargain, or blurt out significant truths to make it stop. (progressDelta: 25-40).",
+    "- If Stress is > 90: You are BROKEN. You give up the full secret immediately. (isBroken: true, progressDelta: 100).",
+    "- If Intel Revealed is > 80: You are defeated. You give up everything.",
+    "- Your goal is to delay, but you are failing.",
+    "- The interrogator (User) will try to get info or stress you out.",
+    "- DO NOT return Markdown. The game UI text parser will break.",
+    "",
+    "You must update the game state:",
+    "- pressureDelta: How much your stress changes based on their tactic (e.g. +10 for threats, -5 for calming).",
+    "- progressDelta: Did you slip up? Did they trick you? (+10 if yes, 0 if no).",
+    "- isBroken: Set to true ONLY if you completely give up your secrets.",
+    "- reply: Your spoken response (max 2 sentences).",
+    "",
+    "Return JSON matching the schema."
+  ].join("\n");
+
+  const user = "INTERROGATOR: " + args.userMessage;
+
+  try {
+     const { data } = await chatJson({
+        system,
+        user,
+        schemaName: "LlmInterrogationSchema",
+        validate: (obj) => LlmInterrogationSchema.parse(obj),
+        temperature: 0.7,
+     });
+     return data;
+  } catch (e) {
+     console.error("LLM Interrogation Failed", e);
+     return { 
+       reply: "...", 
+       pressureDelta: 0, 
+       progressDelta: 0, 
+       isBroken: false 
+     };
   }
 }

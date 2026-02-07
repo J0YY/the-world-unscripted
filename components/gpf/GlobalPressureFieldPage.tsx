@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { GameSnapshot } from "@/engine";
 import type { MapMode } from "./types";
@@ -14,8 +15,9 @@ import SignalsStrip from "./SignalsStrip";
 import BriefingFeed from "./BriefingFeed";
 import TourButton from "./TourButton";
 import IntelChatbot from "./IntelChatbot";
+import InterrogationRoom from "./InterrogationRoom";
 import DiplomacyPanel from "../DiplomacyPanel";
-import { Info } from "lucide-react";
+import { Info, ScanEye, TrendingUp } from "lucide-react";
 
 const PixelWorldMap = dynamic(() => import("./PixelWorldMap"), {
   ssr: false,
@@ -33,6 +35,7 @@ export default function GlobalPressureFieldPage({
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
 }) {
+  const router = useRouter();
   const [mode, setMode] = useState<MapMode>("location");
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
@@ -49,6 +52,58 @@ export default function GlobalPressureFieldPage({
     const t = setTimeout(() => setBootActive(false), 560);
     return () => clearTimeout(t);
   }, [snapshot.turn]);
+  const [isInterrogationOpen, setIsInterrogationOpen] = useState(false);
+  const [interrogationStatus, setInterrogationStatus] = useState<"ready" | "completed" | "failed">("ready");
+  const [showRewardToast, setShowRewardToast] = useState(false);
+  
+  // Reset interrogation status on new turn
+  useEffect(() => {
+     setInterrogationStatus("ready");
+  }, [snapshot.turn]);
+
+  // Determine if a spy is available (33% chance per turn -> ~once every 3 turns)
+  const isSpyAvailable = useMemo(() => {
+     // Deterministic random based on turn + gameId so it persists across re-renders/reloads for the same turn
+     const seedStr = `${snapshot.gameId}-${snapshot.turn}`;
+     let h = 0xdeadbeef;
+     for(let i = 0; i < seedStr.length; i++)
+        h = Math.imul(h ^ seedStr.charCodeAt(i), 2654435761);
+     
+     const val = ((h ^ h >>> 16) >>> 0) / 4294967296;
+     
+     return val < 0.33;
+  }, [snapshot.turn, snapshot.gameId]);
+
+  const targetCountry = useMemo(() => {
+     // Pick a neighbor or a major power from diplomacy
+     const neighbors = snapshot.countryProfile.neighbors;
+     const powers = snapshot.diplomacy?.nations.map(n => n.name) || [];
+     const candidates = [...neighbors, ...powers];
+     const seed = snapshot.turn;
+     if (candidates.length === 0) return "Unknown Power";
+     return candidates[seed % candidates.length];
+  }, [snapshot.countryProfile.neighbors, snapshot.diplomacy, snapshot.turn]);
+
+  const missionObjective = useMemo(() => {
+     const objectives = [
+        "Extract details regarding the recent mobilization of armored divisions near the border.",
+        "Verify rumors of a new biochemical weapon being developed in secret underground labs.",
+        "Identify the network of political dissidents being funded to destabilize our regime.",
+        "Locate the source of the recent cyber-attacks on our national power grid.",
+        "Determine the true allegiance of the double agent 'Nightingale' operating in our capital.",
+        "Obtain the launch codes or location of the rogue tactical missile shipment.",
+        "Uncover the details of the secret trade agreement being negotiated with our rival.",
+        "Find the location of the safehouse where the opposition leader is hiding."
+     ];
+     // Use a combination of turn and gameId for a stable but unique seed
+     const seedStr = `${snapshot.gameId}-${snapshot.turn}-objective`;
+     let h = 0x811c9dc5;
+     for(let i = 0; i < seedStr.length; i++)
+        h = Math.imul(h ^ seedStr.charCodeAt(i), 16777619);
+     
+     const index = Math.abs(h) % objectives.length;
+     return objectives[index];
+  }, [snapshot.gameId, snapshot.turn]);
 
   const derivedMode = mode === "world-events" ? "world-events" : "relationship";
   const derived = useMemo(() => deriveGpf(snapshot, derivedMode), [snapshot, derivedMode]);
@@ -251,20 +306,39 @@ export default function GlobalPressureFieldPage({
             )}
           </div>
           <div id="gpf-intel" className="flex flex-col gap-2">
-            <div className="flex items-center gap-3 border-b border-[var(--ds-gray-alpha-200)] pb-1 mb-1">
-               <button 
-                  onClick={() => setLeftTab("intel")}
-                  className={`px-1 text-xs font-mono uppercase tracking-tight transition-colors ${leftTab === "intel" ? "text-[var(--ds-gray-1000)] font-bold" : "text-[var(--ds-gray-500)] hover:text-[var(--ds-gray-900)]"}`}
-               >
-                  Intel
-               </button>
-               <div className="h-3 w-px bg-[var(--ds-gray-alpha-200)]" />
-               <button 
-                  onClick={() => setLeftTab("diplomacy")}
-                  className={`px-1 text-xs font-mono uppercase tracking-tight transition-colors ${leftTab === "diplomacy" ? "text-[var(--ds-gray-1000)] font-bold" : "text-[var(--ds-gray-500)] hover:text-[var(--ds-gray-900)]"}`}
-               >
-                  Diplomacy
-               </button>
+            <div className="flex items-center gap-3 border-b border-[var(--ds-gray-alpha-200)] pb-1 mb-1 justify-between">
+               <div className="flex items-center gap-3">
+                  <button 
+                     onClick={() => setLeftTab("intel")}
+                     className={`px-1 text-xs font-mono uppercase tracking-tight transition-colors ${leftTab === "intel" ? "text-[var(--ds-gray-1000)] font-bold" : "text-[var(--ds-gray-500)] hover:text-[var(--ds-gray-900)]"}`}
+                  >
+                     Intel
+                  </button>
+                  <div className="h-3 w-px bg-[var(--ds-gray-alpha-200)]" />
+                  <button 
+                     onClick={() => setLeftTab("diplomacy")}
+                     className={`px-1 text-xs font-mono uppercase tracking-tight transition-colors ${leftTab === "diplomacy" ? "text-[var(--ds-gray-1000)] font-bold" : "text-[var(--ds-gray-500)] hover:text-[var(--ds-gray-900)]"}`}
+                  >
+                     Diplomacy
+                  </button>
+               </div>
+               {leftTab === "intel" && isSpyAvailable && interrogationStatus === "ready" && (
+                  <button 
+                    onClick={() => setIsInterrogationOpen(true)}
+                    className="text-[10px] bg-red-900/20 hover:bg-red-900/40 text-red-400 px-2 py-0.5 rounded border border-red-900/30 animate-pulse flex items-center gap-1"
+                  >
+                    <span className="relative flex h-2 w-2">
+                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                       <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
+                    </span>
+                    INTERROGATE
+                  </button>
+               )}
+               {leftTab === "intel" && (!isSpyAvailable || interrogationStatus !== "ready") && (
+                   <span className="text-[10px] text-[var(--ds-gray-500)] uppercase tracking-wider px-2 py-0.5 opacity-50 cursor-not-allowed">
+                       {interrogationStatus === "completed" ? "Intel Extracted" : interrogationStatus === "failed" ? "Subject Unresponsive" : "No Captives"}
+                   </span>
+               )}
             </div>
             {leftTab === "intel" ? (
                <IntelChatbot llmMode={snapshot.llmMode} />
@@ -312,6 +386,52 @@ export default function GlobalPressureFieldPage({
         </p>
         </footer>
       </motion.div>
+      
+      {showRewardToast && (
+        <div className="fixed bottom-8 right-8 z-[100] bg-neutral-900/95 border border-green-500/50 text-green-100 px-6 py-4 rounded-lg shadow-2xl animate-in slide-in-from-bottom duration-500 fade-in flex items-center gap-4 backdrop-blur-xl">
+            <div className="p-3 bg-green-500/20 rounded-full border border-green-500/30 animate-pulse">
+                <ScanEye className="w-6 h-6 text-green-400" />
+            </div>
+            <div>
+                <h4 className="font-mono font-bold text-sm uppercase tracking-widest text-green-300">New Intelligence Integrated</h4>
+                <div className="flex items-center gap-2 mt-1">
+                   <TrendingUp className="w-3 h-3 text-green-400" />
+                   <p className="text-xs text-neutral-300 font-mono">Clarity increased (+15). Map data updated.</p>
+                </div>
+            </div>
+        </div>
+      )}
+
+      <InterrogationRoom 
+        isOpen={isInterrogationOpen}
+        onClose={() => setIsInterrogationOpen(false)}
+        onSuccess={async () => {
+           setInterrogationStatus("completed");
+           try {
+              // Claim reward
+              const res = await fetch("/api/game/interrogation/reward", {
+                 method: "POST",
+                 headers: { "Content-Type": "application/json" },
+                 body: JSON.stringify({ gameId: snapshot.gameId, amount: 15 })
+              });
+              if(res.ok) {
+                  router.refresh();
+                  setShowRewardToast(true);
+                  setTimeout(() => setShowRewardToast(false), 5000);
+              }
+           } catch(e) {
+              console.error("Failed to claim reward", e);
+           }
+           setIsInterrogationOpen(false);
+        }}
+        onFailure={() => {
+           setInterrogationStatus("failed");
+           // Keep open briefly or close? Let's close for now to enforce the "lost chance" feeling
+           setIsInterrogationOpen(false);
+        }}
+        targetCountry={targetCountry}
+        objective={missionObjective}
+      />
     </main>
   );
 }

@@ -459,3 +459,10 @@ export const LlmDiplomacyChatResponseSchema = z.object({
   escalationChange: z.number().int().min(-10).max(10).describe("Change in willingness to escalate (-10 to +10). Optional."),
   generatedHeadline: z.string().optional().describe("A VERY SHORT (max 6 words) global news headline if this interaction causes a public splash (e.g. 'US President snubs player'). Leave empty if private."),
 });
+
+export const LlmInterrogationSchema = z.object({
+  reply: z.string().describe("The dialogue response from the spy character."),
+  pressureDelta: z.number().int().min(-20).max(30).describe("Change in spy's stress/pressure level (negative to calm, positive to stress)."),
+  progressDelta: z.number().int().min(0).max(40).describe("Amount of intelligence revealed (0 for resistance, high for cooperation)."),
+  isBroken: z.boolean().describe("True if the spy completely breaks and reveals everything."),
+});
