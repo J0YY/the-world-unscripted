@@ -145,6 +145,7 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
                 >
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-semibold text-[var(--ds-gray-1000)]">{nation.name}</span>
+                    <StanceBadge stance={nation.stance} />
                   </div>
                   <div className="text-xs text-[var(--ds-gray-900)] font-mono mb-2">
                     {nation.ministerName}
@@ -177,12 +178,31 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
 }
 
 function StanceBadge({ stance }: { stance: number }) {
+  const target = Math.max(0, Math.min(100, Math.round(Number.isFinite(stance) ? stance : 50)));
+  const [shown, setShown] = useState(target);
+
+  useEffect(() => {
+    setShown((prev) => (Number.isFinite(prev) ? prev : target));
+    const id = setInterval(() => {
+      setShown((prev) => {
+        if (prev === target) return prev;
+        const diff = target - prev;
+        const step = Math.sign(diff) * Math.max(1, Math.floor(Math.abs(diff) / 6));
+        const next = prev + step;
+        // Clamp to avoid overshoot.
+        if (diff > 0) return Math.min(target, next);
+        return Math.max(target, next);
+      });
+    }, 38);
+    return () => clearInterval(id);
+  }, [target]);
+
   let color = "bg-gray-100 text-gray-600 border-gray-200";
   let label = "Neutral";
-  if (stance < 30) {
+  if (target < 30) {
     color = "bg-red-950/20 text-red-400 border-red-900/30";
     label = "Hostile";
-  } else if (stance > 70) {
+  } else if (target > 70) {
     color = "bg-emerald-950/20 text-emerald-400 border-emerald-900/30";
     label = "Ally";
   }
@@ -191,7 +211,7 @@ function StanceBadge({ stance }: { stance: number }) {
     <span
       className={`px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-mono border ${color}`}
     >
-      {label} ({stance})
+      {label} ({shown})
     </span>
   );
 }

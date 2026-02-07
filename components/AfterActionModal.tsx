@@ -243,6 +243,14 @@ export default function AfterActionModal({
     (!!report?.llm && Array.isArray(report.llm.narrative) && report.llm.narrative.filter((x) => typeof x === "string").length >= 2);
 
   const loadingAi = llmMode === "ON" && !aiReady && !baseErr;
+  const stamp = useMemo(() => {
+    const err = typeof report?.llmError === "string" && report.llmError.trim() ? report.llmError.trim() : "";
+    const contested = llmMode === "ON" && (!aiReady || !!err || !!baseErr);
+    return {
+      text: contested ? "CONTESTED" : "CONFIRMED",
+      tone: contested ? "contested" as const : "confirmed" as const,
+    };
+  }, [aiReady, baseErr, llmMode, report?.llmError]);
 
   return (
     <motion.div
@@ -254,11 +262,28 @@ export default function AfterActionModal({
       aria-modal="true"
     >
       <motion.div
-        className="w-full max-w-4xl max-h-[84vh] overflow-y-auto rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-2xl"
+        className="relative w-full max-w-4xl max-h-[84vh] overflow-y-auto rounded-xl border border-white/10 bg-zinc-950 p-5 shadow-2xl"
         initial={{ y: 10, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.25 }}
       >
+        {/* Classified stamp (cosmetic) */}
+        <motion.div
+          key={`${outcome.turnResolved}-${stamp.text}`}
+          className={[
+            "pointer-events-none absolute left-1/2 top-8 -translate-x-1/2 rotate-[-14deg] select-none",
+            "border rounded px-6 py-2",
+            stamp.tone === "confirmed" ? "border-emerald-500/35 text-emerald-200/25" : "border-amber-500/35 text-amber-200/25",
+          ].join(" ")}
+          initial={{ opacity: 0, scale: 1.35, y: -12 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 260, damping: 18 }}
+          style={{ textShadow: "0 0 18px rgba(255,255,255,0.06)" }}
+          aria-hidden="true"
+        >
+          <div className="font-mono font-black tracking-[0.45em] text-4xl leading-none">{stamp.text}</div>
+        </motion.div>
+
         {llmMode === "ON" && !aiReady ? (
           <div className="rounded-xl border border-white/10 bg-black/30 p-6">
             <div className="text-[10px] font-mono uppercase tracking-[0.3em] text-white/50">After Action</div>
