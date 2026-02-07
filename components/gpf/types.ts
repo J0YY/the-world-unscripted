@@ -43,7 +43,7 @@ export const mapModeConfig: Record<
   pressure: {
     label: "Pressure",
     legendLabel: "Global Pressure",
-    hotspotLabel: "Pressure Points",
+    hotspotLabel: "Global Pressure Points",
   },
   relationship: {
     label: "Relationship",

@@ -191,7 +191,7 @@ export default function GlobalPressureFieldPage({
               countryCodeToNames={derived.countryCodeToNames}
             />
           </div>
-          <SignalsStrip signals={derived.signals} />
+          <SignalsStrip signals={derived.signals} turn={derived.turn} />
         </div>
 
         <div className="w-full lg:w-72 xl:w-96 flex-shrink-0 space-y-3">
