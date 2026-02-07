@@ -2,7 +2,7 @@
 
 import { useMemo, memo, useEffect, useState } from "react";
 import { geoMercator } from "d3-geo";
-import { mapModeConfig, type MapMode, type CountryColorMap } from "./types";
+import { mapModeConfig, type MapMode, type CountryColorMap, type UiBriefingItem } from "./types";
 
 type DottedMapData = Record<string, Array<{ lon: number; lat: number; cityDistanceRank: number }>>;
 
@@ -13,8 +13,30 @@ const modeColors: Record<MapMode, { high: string; med: string; low: string }> = 
 };
 
 const ColoredPixel = memo(
-  ({ x, y, color }: { x: number; y: number; color: string }) => (
-    <rect x={x} y={y} width={2.5} height={2.5} fill={color} opacity={0.9} />
+  ({ x, y, color, onClick }: { x: number; y: number; color: string; onClick?: () => void }) => (
+    <g onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }} pointerEvents={onClick ? 'all' : 'none'}>
+      {/* Larger invisible rect for easier clicking */}
+      {onClick && (
+        <rect 
+          x={x - 1} 
+          y={y - 1} 
+          width={6} 
+          height={6} 
+          fill="transparent"
+          pointerEvents="all"
+        />
+      )}
+      {/* Visible pixel */}
+      <rect 
+        x={x} 
+        y={y} 
+        width={2.5} 
+        height={2.5} 
+        fill={color} 
+        opacity={0.9}
+        pointerEvents="none"
+      />
+    </g>
   )
 );
 ColoredPixel.displayName = "ColoredPixel";
@@ -30,6 +52,8 @@ interface PixelWorldMapProps {
   height?: number;
   mode: MapMode;
   countryColors: CountryColorMap[];
+  briefings?: UiBriefingItem[];
+  countryCodeToNames?: Map<string, Set<string>>;
 }
 
 export default function PixelWorldMap({
@@ -37,9 +61,12 @@ export default function PixelWorldMap({
   height = 560,
   mode,
   countryColors,
+  briefings = [],
+  countryCodeToNames,
 }: PixelWorldMapProps) {
   const [dottedMapData, setDottedMapData] = useState<DottedMapData | null>(null);
   const [dottedMapErr, setDottedMapErr] = useState<string | null>(null);
+  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
 
   const projection = useMemo(
     () =>
@@ -80,6 +107,25 @@ export default function PixelWorldMap({
   // special marker inserted by adapters when player's country is fictional
   // (countryCode === "__PLAYER__"). Contains lat/lon of inferred location.
   const playerLocation = useMemo(() => countryColors.find((c) => c.countryCode === "__PLAYER__"), [countryColors]);
+
+  // Filter briefings that mention the selected country
+  const filteredBriefings = useMemo(() => {
+    if (!selectedCountry || !countryCodeToNames) return [];
+    
+    const possibleNames = countryCodeToNames.get(selectedCountry);
+    if (!possibleNames) return [];
+    
+    return briefings.filter((briefing) => {
+      const content = briefing.content.toLowerCase();
+      // Check if any of the country's possible names appear in the briefing
+      for (const name of possibleNames) {
+        if (content.includes(name)) {
+          return true;
+        }
+      }
+      return false;
+    });
+  }, [selectedCountry, briefings, countryCodeToNames]);
 
   const pixels = useMemo(() => {
     const result: Array<{
@@ -132,7 +178,7 @@ export default function PixelWorldMap({
           const dx = p.x - px;
           const dy = p.y - py;
           if (dx * dx + dy * dy <= radius * radius) {
-            p.color = "#ff66b2";
+            p.color = "#ffffff";
             p.isColored = true;
             p.countryCode = "__PLAYER__";
           }
@@ -157,7 +203,13 @@ export default function PixelWorldMap({
         <g>
             {pixels.map((p) =>
               p.isColored ? (
-                <ColoredPixel key={p.key} x={p.x} y={p.y} color={p.color} />
+                <ColoredPixel 
+                  key={p.key} 
+                  x={p.x} 
+                  y={p.y} 
+                  color={p.color}
+                  onClick={mode === "world-events" ? () => setSelectedCountry(p.countryCode) : undefined}
+                />
               ) : (
                 <UncoloredPixel key={p.key} x={p.x} y={p.y} />
               )
@@ -182,7 +234,55 @@ export default function PixelWorldMap({
           </div>
         </div>
       </div>
+
+      {/* Briefings Panel - only in world-events mode */}
+      {mode === "world-events" && selectedCountry && (
+        <div 
+          className="absolute top-4 right-4 z-50 w-96 max-w-[calc(100%-2rem)] p-4 bg-[var(--ds-background-100)]/95 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded-lg shadow-xl"
+          style={{
+            maxHeight: '500px',
+            overflowY: 'auto'
+          }}
+        >
+          <button
+            onClick={() => setSelectedCountry(null)}
+            className="absolute top-2 right-2 p-1 rounded hover:bg-[var(--ds-gray-alpha-200)] transition-colors"
+            aria-label="Close"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="4" y1="4" x2="12" y2="12" />
+              <line x1="12" y1="4" x2="4" y2="12" />
+            </svg>
+          </button>
+          <div className="text-[11px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)] mb-3 pr-6">
+            Related Briefings {filteredBriefings.length > 0 && `(${filteredBriefings.length})`}
+          </div>
+          {filteredBriefings.length > 0 ? (
+            <>
+              <div className="space-y-3">
+                {filteredBriefings.slice(0, 10).map((briefing) => (
+                  <div key={briefing.id} className="text-[11px] border-l-2 border-[var(--ds-gray-alpha-300)] pl-3 py-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[9px] text-[var(--ds-gray-600)] uppercase font-semibold">{briefing.source}</span>
+                      <span className="text-[9px] text-[var(--ds-gray-500)]">{briefing.timestamp}</span>
+                    </div>
+                    <div className="text-[var(--ds-gray-1000)] leading-relaxed">{briefing.content}</div>
+                  </div>
+                ))}
+                {filteredBriefings.length > 10 && (
+                  <div className="text-[9px] text-[var(--ds-gray-600)] italic text-center pt-2 border-t border-[var(--ds-gray-alpha-200)]">
+                    +{filteredBriefings.length - 10} more briefings
+                  </div>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="text-[11px] text-[var(--ds-gray-600)] italic text-center py-4">
+              No briefing news
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
-

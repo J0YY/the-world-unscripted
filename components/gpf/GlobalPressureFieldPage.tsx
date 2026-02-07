@@ -187,6 +187,8 @@ export default function GlobalPressureFieldPage({
             <PixelWorldMap
               mode={mode}
               countryColors={derived.countryColors}
+              briefings={derived.briefings}
+              countryCodeToNames={derived.countryCodeToNames}
             />
           </div>
           <SignalsStrip signals={derived.signals} />
