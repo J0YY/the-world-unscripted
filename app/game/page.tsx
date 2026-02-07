@@ -9,6 +9,15 @@ import { PromptConsole } from "@/components/PromptConsole";
 import { getStoredGameId, setLastFailure, setLastOutcome } from "@/components/storage";
 import AfterActionModal from "@/components/AfterActionModal";
 
+function needsHydration(s: GameSnapshot | null): boolean {
+  if (!s) return false;
+  if (s.llmMode !== "ON") return false;
+  const briefing = s.playerView?.briefing;
+  const incoming = s.playerView?.incomingEvents ?? [];
+  const headlines = Array.isArray(briefing?.headlines) ? briefing.headlines : [];
+  return incoming.length === 0 || headlines.length === 0;
+}
+
 export default function GameControlRoomPage() {
   const router = useRouter();
   const [snap, setSnap] = useState<GameSnapshot | null>(null);
@@ -30,12 +39,31 @@ export default function GameControlRoomPage() {
       router.push("/");
       return;
     }
-    apiSnapshot(gameId)
-      .then((latest) => {
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const latest = await apiSnapshot(gameId);
+        if (stopped) return;
         setSnap(latest);
         if (latest.status === "FAILED") router.push("/failure");
-      })
-      .catch((e) => setError((e as Error).message));
+        if (!needsHydration(latest)) return;
+        // Poll until LLM hydration finishes (non-blocking server).
+        const start = Date.now();
+        while (!stopped && Date.now() - start < 45_000) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const next = await apiSnapshot(gameId);
+          if (stopped) return;
+          setSnap(next);
+          if (!needsHydration(next)) break;
+        }
+      } catch (e) {
+        if (!stopped) setError((e as Error).message);
+      }
+    };
+    void poll();
+    return () => {
+      stopped = true;
+    };
   }, [router]);
 
   const title = useMemo(() => (snap ? `${snap.countryProfile.name} — Turn ${snap.turn}` : "Control room"), [snap]);
@@ -64,7 +92,16 @@ export default function GameControlRoomPage() {
       // - next snapshot hydration (Turn N+1 briefing/events)
       // This overlaps LLM latency with the time the user is reading the modal.
       void apiResolutionReport(gameId, outcome.turnResolved, { forceLlm: true }).catch(() => {});
-      void apiSnapshot(gameId).then(setSnap).catch(() => {});
+      // Poll snapshot briefly to pick up hydrated events/briefing.
+      void (async () => {
+        const start = Date.now();
+        while (Date.now() - start < 45_000) {
+          const s = await apiSnapshot(gameId);
+          setSnap(s);
+          if (!needsHydration(s)) break;
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      })().catch(() => {});
     }
   }
 

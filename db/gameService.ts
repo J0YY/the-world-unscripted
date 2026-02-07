@@ -23,6 +23,31 @@ import { ensureDbSchema } from "./ensureDb";
 declare global {
   // In-flight de-dupe for snapshot hydration (LLM turn-start + dossier).
   var __twuoSnapshotHydrateInflight: Map<string, Promise<void>> | undefined;
+  // In-flight de-dupe for diplomacy generation (non-blocking).
+  var __twuoDiplomacyInflight: Map<string, Promise<void>> | undefined;
+}
+
+function hydrateDiplomacyInBackground(args: { gameId: string; world: WorldState; snapshot: GameSnapshot }): void {
+  if (llmMode() !== "ON") return;
+  const inflight = (globalThis.__twuoDiplomacyInflight ??= new Map<string, Promise<void>>());
+  const key = `${args.gameId}:diplomacy`;
+  if (inflight.has(key)) return;
+
+  const run = (async () => {
+    try {
+      const dip = await llmGenerateDiplomacy({ world: args.world });
+      if (!dip?.nations?.length) return;
+      args.snapshot.diplomacy = { nations: dip.nations };
+      await prisma.game.update({
+        where: { id: args.gameId },
+        data: { lastPlayerSnapshot: args.snapshot as unknown as object },
+      });
+    } catch {
+      // Ignore: diplomacy is non-critical.
+    }
+  })().finally(() => inflight.delete(key));
+
+  inflight.set(key, run);
 }
 
 async function hydrateSnapshotWithLlmIfNeeded(args: {
@@ -49,7 +74,9 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
   }
 
   const run = (async () => {
-    const [pkgRes, dossierRes, dipRes] = await Promise.allSettled([
+    // Generate core turn-start content concurrently.
+    // Diplomacy generation is intentionally non-blocking (handled separately).
+    const [pkgRes, dossierRes] = await Promise.allSettled([
       needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
       needsDossier
         ? llmGenerateCountryProfile({
@@ -62,7 +89,6 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
             },
           })
         : Promise.resolve(null),
-      needsDiplomacy ? llmGenerateDiplomacy({ world }) : Promise.resolve(null),
     ]);
 
     if (pkgRes.status === "fulfilled" && pkgRes.value) {
@@ -83,15 +109,10 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
       snapshot.countryProfile = dossierRes.value.countryProfile;
     }
 
-    if (dipRes.status === "fulfilled" && dipRes.value && typeof dipRes.value === "object" && "nations" in dipRes.value) {
-      snapshot.diplomacy = { nations: (dipRes.value as { nations: GameSnapshot["diplomacy"]["nations"] }).nations };
-    }
-
     // Persist only if we actually improved anything.
     if (
       (pkgRes.status === "fulfilled" && pkgRes.value) ||
-      (dossierRes.status === "fulfilled" && dossierRes.value) ||
-      (dipRes.status === "fulfilled" && dipRes.value)
+      (dossierRes.status === "fulfilled" && dossierRes.value)
     ) {
       await prisma.game.update({
         where: { id: gameId },
@@ -101,6 +122,9 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
         },
       });
     }
+
+    // Start diplomacy generation in background (do not block snapshot response).
+    if (needsDiplomacy) hydrateDiplomacyInBackground({ gameId, world, snapshot });
   })().finally(() => inflight.delete(key));
 
   inflight.set(key, run);
@@ -481,7 +505,7 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
 export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   const game = await prisma.game.findUnique({ where: { id: gameId } });
   if (!game) throw new Error("Game not found");
-  let snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  const snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
   snapshot.llmMode = llmMode();
 
   // Backfill older snapshots (pre-dossier upgrade) so UI never crashes.
@@ -505,13 +529,9 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   // once (with in-flight de-dupe) when the client first loads the game.
   if (snapshot.llmMode === "ON") {
     const world = game.worldState as unknown as WorldState;
-    await hydrateSnapshotWithLlmIfNeeded({ gameId, world, snapshot });
-    // Re-read the snapshot after hydration so callers always get the persisted shape.
-    const refreshed = await prisma.game.findUnique({ where: { id: gameId } });
-    if (refreshed) {
-      snapshot = refreshed.lastPlayerSnapshot as unknown as GameSnapshot;
-      snapshot.llmMode = llmMode();
-    }
+    // IMPORTANT: never block the snapshot endpoint on LLM work.
+    // Hydration runs in the background and will be visible on the next poll.
+    void hydrateSnapshotWithLlmIfNeeded({ gameId, world, snapshot }).catch(() => {});
   }
 
   // Note: control-room view is optional; the current UI derives its feed/signals deterministically
