@@ -135,6 +135,8 @@ function fallbackActionsFromDirective(args: {
     /\balliance\b|\bbloc\b|\bpact\b|\btreaty\b|\bmutual defense\b|\bcollective security\b|\bsecurity guarantee\b/.test(d) &&
     !/\banti-?alliance\b|\bbreak alliance\b/.test(d);
 
+  const wantInvestment = /\b(invest|investment|fdi|funding|capital injection|tech sector|technology sector|industrial investment)\b/.test(d);
+
   const wantIndustry = /\binfrastructure\b|\bindustry\b|\bindustrial\b|\bfactory\b|\binvest\b|\bbuild\b/.test(d);
   const wantSubsidy = /\bsubsid(y|ies)\b|\bprice cap\b|\bfuel\b|\bfood\b/.test(d);
   const wantAusterity = /\bausterity\b|\bcut spending\b|\btighten\b/.test(d);
@@ -148,6 +150,17 @@ function fallbackActionsFromDirective(args: {
   if (wantIndustry && actions.length < args.remainingSlots) {
     actions.push({ kind: "ECONOMY", subkind: "INDUSTRIAL_PUSH", intensity, isPublic });
     rationale.push("Translate infrastructure/industry intent into an industrial push.");
+  }
+  if (wantInvestment && actions.length < args.remainingSlots) {
+    const mentionsChina = /\bchina\b/.test(d);
+    actions.push({
+      kind: "ECONOMY",
+      subkind: "TRADE_DEAL_ATTEMPT",
+      intensity,
+      isPublic,
+      targetActor: mentionsChina ? "CHINA" : targetActorId,
+    });
+    rationale.push("Translate investment/FDI intent into trade/investment talks (economic outreach).");
   }
   if (wantAlliance && actions.length < args.remainingSlots) {
     const topic = /\btrade\b|\beconomic\b|\bmarket\b/.test(d) ? "trade" : "security";
