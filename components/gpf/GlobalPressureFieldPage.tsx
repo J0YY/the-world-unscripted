@@ -15,7 +15,6 @@ import TourButton from "./TourButton";
 import IntelChatbot from "./IntelChatbot";
 import DiplomacyPanel from "../DiplomacyPanel";
 import { Info } from "lucide-react";
-import { apiPressureDelta } from "@/components/api";
 
 const PixelWorldMap = dynamic(() => import("./PixelWorldMap"), {
   ssr: false,
@@ -36,21 +35,35 @@ export default function GlobalPressureFieldPage({
   const [mode, setMode] = useState<MapMode>("pressure");
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
-  const [deltaPerTurn, setDeltaPerTurn] = useState<number | null>(null);
   const [leftTab, setLeftTab] = useState<"intel" | "diplomacy">("intel");
 
   const derivedMode = mode === "relationship" ? "relationship" : "world-events";
   const derived = useMemo(() => deriveGpf(snapshot, derivedMode), [snapshot, derivedMode]);
-  const deltaPerTurnDisplay = snapshot.turn <= 1 ? null : deltaPerTurn;
 
-  useEffect(() => {
-    if (snapshot.turn <= 1) return;
-    const ac = new AbortController();
-    apiPressureDelta(snapshot.gameId, snapshot.turn, { signal: ac.signal })
-      .then((r) => setDeltaPerTurn(typeof r.deltaPerTurn === "number" ? r.deltaPerTurn : null))
-      .catch(() => setDeltaPerTurn(null));
-    return () => ac.abort();
-  }, [snapshot.gameId, snapshot.turn]);
+  const powerIndex = useMemo(() => {
+    const clamp = (n: number) => Math.max(0, Math.min(100, n));
+    const est = (m: { estimatedValue: number } | undefined) => clamp(Number.isFinite(m?.estimatedValue) ? m!.estimatedValue : 50);
+    const inv = (x: number) => 100 - clamp(x);
+
+    const ind = snapshot.playerView.indicators;
+    const domestic =
+      0.18 * est(ind.economicStability) +
+      0.14 * est(ind.legitimacy) +
+      0.10 * est(ind.publicApproval) +
+      0.10 * est(ind.eliteCohesion) +
+      0.08 * est(ind.militaryLoyalty) +
+      0.12 * est(ind.internationalCredibility) +
+      0.12 * est(ind.sovereigntyIntegrity) +
+      0.06 * est(ind.intelligenceClarity) +
+      0.05 * inv(est(ind.inflationPressure)) +
+      0.03 * inv(est(ind.unrestLevel)) +
+      0.02 * inv(est(ind.warStatus));
+
+    const stances = Array.isArray(snapshot.diplomacy?.nations) ? snapshot.diplomacy!.nations.map((n) => clamp(n.stance)) : [];
+    const influence = stances.length ? stances.reduce((a, b) => a + b, 0) / stances.length : 50;
+
+    return clamp(Math.round(domestic * 0.8 + influence * 0.2));
+  }, [snapshot]);
 
   return (
     <main className="font-mono min-h-screen max-w-[1800px] mx-auto relative overflow-hidden px-4 md:px-6 pt-6 md:pt-8 pb-8">
@@ -138,8 +151,7 @@ export default function GlobalPressureFieldPage({
           <div id="gpf-pressure">
             <WorldPressure
               pressureIndex={derived.pressureIndex}
-              deltaPerTurn={deltaPerTurnDisplay}
-              turn={derived.turn}
+              powerIndex={powerIndex}
               narrativeGravity={derived.narrativeGravity}
               systemStrain={derived.systemStrain}
             />

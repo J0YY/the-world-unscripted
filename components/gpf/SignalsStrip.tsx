@@ -44,16 +44,16 @@ function DecryptionMinigame({
   const [cursorPos, setCursorPos] = useState(0);
   const [direction, setDirection] = useState(1);
   const speedRef = useRef(1.5 + (signal.intensity * 1.5));
-  const requestRef = useRef<number>();
+  const requestRef = useRef<number | null>(null);
 
   // --- Grid State ---
   const [activeCell, setActiveCell] = useState<number | null>(null);
-  const gridTimerRef = useRef<NodeJS.Timeout>();
+  const gridTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- Sequence State ---
   const [sequence, setSequence] = useState<string[]>([]);
   const [seqIndex, setSeqIndex] = useState(0);
-  const seqTimerRef = useRef<NodeJS.Timeout>();
+  const seqTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [status, setStatus] = useState<"playing" | "fail" | "success">("playing");
 
@@ -96,7 +96,7 @@ function DecryptionMinigame({
       
       // Ensure no timer is running initially - it starts on first input
       if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
-      seqTimerRef.current = undefined;
+      seqTimerRef.current = null;
   }, [stage, signal.intensity]);
 
   // --- Lifecycle & Handlers ---
@@ -105,10 +105,14 @@ function DecryptionMinigame({
 
     if (gameMode === "oscillator") {
       requestRef.current = requestAnimationFrame(animateOscillator);
-      return () => { if (requestRef.current) cancelAnimationFrame(requestRef.current); };
+      return () => {
+        if (requestRef.current !== null) cancelAnimationFrame(requestRef.current);
+      };
     } else if (gameMode === "grid") {
       if (stage === 0) nextGridTarget(true);
-      return () => { clearTimeout(gridTimerRef.current); };
+      return () => {
+        if (gridTimerRef.current) clearTimeout(gridTimerRef.current);
+      };
     }
   }, [animateOscillator, status, gameMode]);
 
@@ -116,7 +120,9 @@ function DecryptionMinigame({
   useEffect(() => {
     if (status === "playing" && gameMode === "sequence") {
         generateSequence();
-        return () => { clearTimeout(seqTimerRef.current); };
+        return () => {
+          if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
+        };
     }
   }, [status, gameMode, generateSequence]);
 
@@ -142,12 +148,14 @@ function DecryptionMinigame({
               const nextIdx = seqIndex + 1;
               setSeqIndex(nextIdx);
               if (nextIdx >= sequence.length) {
-                  clearTimeout(seqTimerRef.current);
+                  if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
+                  seqTimerRef.current = null;
                   handleSuccess();
               }
           } else {
               // Wrong Key
-              clearTimeout(seqTimerRef.current);
+              if (seqTimerRef.current) clearTimeout(seqTimerRef.current);
+              seqTimerRef.current = null;
               handleFail();
           }
       };
@@ -173,7 +181,8 @@ function DecryptionMinigame({
         setTargetPos(Math.random() * 80 + 10);
         speedRef.current += 1.2; // Faster increase
       } else if (gameMode === "grid") {
-        clearTimeout(gridTimerRef.current);
+        if (gridTimerRef.current) clearTimeout(gridTimerRef.current);
+        gridTimerRef.current = null;
         nextGridTarget(false);
       } else if (gameMode === "sequence") {
           // Sequence re-generates in effect when stage changes
@@ -194,10 +203,12 @@ function DecryptionMinigame({
   const handleGridClick = (index: number) => {
     if (status !== "playing") return;
     if (index === activeCell) {
-       clearTimeout(gridTimerRef.current);
+       if (gridTimerRef.current) clearTimeout(gridTimerRef.current);
+       gridTimerRef.current = null;
        handleSuccess();
     } else {
-      clearTimeout(gridTimerRef.current);
+      if (gridTimerRef.current) clearTimeout(gridTimerRef.current);
+      gridTimerRef.current = null;
       handleFail();
     }
   };
