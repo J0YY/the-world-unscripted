@@ -24,6 +24,78 @@ declare global {
   var __twuoSnapshotHydrateInflight: Map<string, Promise<void>> | undefined;
 }
 
+async function hydrateSnapshotWithLlmIfNeeded(args: {
+  gameId: string;
+  world: WorldState;
+  snapshot: GameSnapshot;
+}): Promise<void> {
+  if (llmMode() !== "ON") return;
+
+  const { gameId, world, snapshot } = args;
+  const needsTurnStart =
+    world.turnStartGenerator === "llm" &&
+    (!world.current?.briefing?.text || world.current.briefing.text.trim().length < 10 || world.current.incomingEvents.length === 0);
+  const needsDossier = snapshot.countryProfile?.generatedBy !== "llm";
+  if (!needsTurnStart && !needsDossier) return;
+
+  const inflight = (globalThis.__twuoSnapshotHydrateInflight ??= new Map<string, Promise<void>>());
+  const key = `${gameId}:${world.turn}:hydrate`;
+  const existing = inflight.get(key);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const run = (async () => {
+    const [pkgRes, dossierRes] = await Promise.allSettled([
+      needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
+      needsDossier
+        ? llmGenerateCountryProfile({
+            world,
+            indicators: {
+              economicStability: snapshot.playerView.indicators.economicStability,
+              legitimacy: snapshot.playerView.indicators.legitimacy,
+              unrestLevel: snapshot.playerView.indicators.unrestLevel,
+              intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (pkgRes.status === "fulfilled" && pkgRes.value) {
+      world.current.briefing = pkgRes.value.briefing;
+      world.current.incomingEvents = pkgRes.value.events;
+      snapshot.playerView.briefing = pkgRes.value.briefing;
+      snapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
+        id: e.id,
+        type: e.type,
+        actor: e.actor,
+        urgency: e.urgency,
+        visibleDescription: e.visibleDescription,
+        playerChoicesHints: e.playerChoicesHints,
+      }));
+    }
+
+    if (dossierRes.status === "fulfilled" && dossierRes.value) {
+      snapshot.countryProfile = dossierRes.value.countryProfile;
+    }
+
+    // Persist only if we actually improved anything.
+    if ((pkgRes.status === "fulfilled" && pkgRes.value) || (dossierRes.status === "fulfilled" && dossierRes.value)) {
+      await prisma.game.update({
+        where: { id: gameId },
+        data: {
+          worldState: world as unknown as object,
+          lastPlayerSnapshot: snapshot as unknown as object,
+        },
+      });
+    }
+  })().finally(() => inflight.delete(key));
+
+  inflight.set(key, run);
+  await run;
+}
+
 function extractAfterSnapshot(playerSnapshot: unknown): GameSnapshot | null {
   if (!playerSnapshot || typeof playerSnapshot !== "object") return null;
   if ("after" in playerSnapshot) {
@@ -352,6 +424,12 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
 
   // Note: no init turnLog artifact is created here; it will be created during real turns.
 
+  // Start LLM hydration immediately (fire-and-forget) so it overlaps with the landing page
+  // and /game navigation. Snapshot endpoint also hydrates (deduped), so this is best-effort.
+  if (llmMode() === "ON") {
+    void hydrateSnapshotWithLlmIfNeeded({ gameId: game.id, world, snapshot }).catch(() => {});
+  }
+
   return snapshot;
 }
 
@@ -403,77 +481,12 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   // once (with in-flight de-dupe) when the client first loads the game.
   if (snapshot.llmMode === "ON") {
     const world = game.worldState as unknown as WorldState;
-    const needsTurnStart =
-      world.turnStartGenerator === "llm" &&
-      (!world.current?.briefing?.text || world.current.briefing.text.trim().length < 10 || world.current.incomingEvents.length === 0);
-    const needsDossier = snapshot.countryProfile?.generatedBy !== "llm";
-
-    if (needsTurnStart || needsDossier) {
-      const inflight = (globalThis.__twuoSnapshotHydrateInflight ??= new Map<string, Promise<void>>());
-      const key = `${gameId}:${world.turn}:hydrate`;
-      const existing = inflight.get(key);
-      const run =
-        existing ??
-        (async () => {
-          const [pkgRes, dossierRes] = await Promise.allSettled([
-            needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
-            needsDossier
-              ? llmGenerateCountryProfile({
-                  world,
-                  indicators: {
-                    economicStability: snapshot.playerView.indicators.economicStability,
-                    legitimacy: snapshot.playerView.indicators.legitimacy,
-                    unrestLevel: snapshot.playerView.indicators.unrestLevel,
-                    intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
-                  },
-                })
-              : Promise.resolve(null),
-          ]);
-
-          if (pkgRes.status === "fulfilled" && pkgRes.value) {
-            world.current.briefing = pkgRes.value.briefing;
-            world.current.incomingEvents = pkgRes.value.events;
-            snapshot.playerView.briefing = pkgRes.value.briefing;
-            snapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
-              id: e.id,
-              type: e.type,
-              actor: e.actor,
-              urgency: e.urgency,
-              visibleDescription: e.visibleDescription,
-              playerChoicesHints: e.playerChoicesHints,
-            }));
-          }
-
-          if (dossierRes.status === "fulfilled" && dossierRes.value) {
-            snapshot.countryProfile = dossierRes.value.countryProfile;
-          }
-
-          // Persist only if we actually improved anything.
-          if (
-            (pkgRes.status === "fulfilled" && pkgRes.value) ||
-            (dossierRes.status === "fulfilled" && dossierRes.value)
-          ) {
-            await prisma.game.update({
-              where: { id: gameId },
-              data: {
-                worldState: world as unknown as object,
-                lastPlayerSnapshot: snapshot as unknown as object,
-              },
-            });
-          }
-        })().finally(() => {
-          inflight.delete(key);
-        });
-
-      if (!existing) inflight.set(key, run);
-      await run;
-
-      // Re-read the snapshot after hydration so callers always get the persisted shape.
-      const refreshed = await prisma.game.findUnique({ where: { id: gameId } });
-      if (refreshed) {
-        snapshot = refreshed.lastPlayerSnapshot as unknown as GameSnapshot;
-        snapshot.llmMode = llmMode();
-      }
+    await hydrateSnapshotWithLlmIfNeeded({ gameId, world, snapshot });
+    // Re-read the snapshot after hydration so callers always get the persisted shape.
+    const refreshed = await prisma.game.findUnique({ where: { id: gameId } });
+    if (refreshed) {
+      snapshot = refreshed.lastPlayerSnapshot as unknown as GameSnapshot;
+      snapshot.llmMode = llmMode();
     }
   }
 

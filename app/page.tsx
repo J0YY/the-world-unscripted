@@ -63,6 +63,9 @@ export default function LandingPage() {
       const snap = await apiCreateGame();
       setStoredGameId(snap.gameId);
       setSnap(snap);
+      // Start snapshot hydration immediately (LLM briefing/events + dossier),
+      // while the user is still on the landing page.
+      void apiSnapshot(snap.gameId).then(setSnap).catch(() => {});
       scrollToStep("dossier");
     } finally {
       setBusy(null);
