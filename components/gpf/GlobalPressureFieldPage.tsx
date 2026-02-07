@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import type { GameSnapshot } from "@/engine";
 import type { MapMode } from "./types";
@@ -14,6 +14,7 @@ import BriefingFeed from "./BriefingFeed";
 import TourButton from "./TourButton";
 import IntelChatbot from "./IntelChatbot";
 import { Info } from "lucide-react";
+import { apiPressureDelta } from "@/components/api";
 
 const PixelWorldMap = dynamic(() => import("./PixelWorldMap"), {
   ssr: false,
@@ -34,8 +35,21 @@ export default function GlobalPressureFieldPage({
   const [mode, setMode] = useState<MapMode>("world-events");
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
+  const [deltaPerTurn, setDeltaPerTurn] = useState<number | null>(null);
 
   const derived = useMemo(() => deriveGpf(snapshot, mode), [snapshot, mode]);
+
+  useEffect(() => {
+    if (snapshot.turn <= 1) {
+      setDeltaPerTurn(null);
+      return;
+    }
+    const ac = new AbortController();
+    apiPressureDelta(snapshot.gameId, snapshot.turn, { signal: ac.signal })
+      .then((r) => setDeltaPerTurn(typeof r.deltaPerTurn === "number" ? r.deltaPerTurn : null))
+      .catch(() => setDeltaPerTurn(null));
+    return () => ac.abort();
+  }, [snapshot.gameId, snapshot.turn]);
 
   return (
     <main className="font-mono min-h-screen max-w-[1800px] mx-auto relative overflow-hidden px-4 md:px-6 pt-6 md:pt-8 pb-8">
@@ -123,7 +137,8 @@ export default function GlobalPressureFieldPage({
           <div id="gpf-pressure">
             <WorldPressure
               pressureIndex={derived.pressureIndex}
-              deltaPerTurn={derived.deltaPerTurn}
+              deltaPerTurn={deltaPerTurn}
+              turn={derived.turn}
               narrativeGravity={derived.narrativeGravity}
               systemStrain={derived.systemStrain}
             />
