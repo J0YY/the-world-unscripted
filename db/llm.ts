@@ -375,6 +375,8 @@ export async function llmParsePlayerDirective(args: {
     "- Do NOT set targetActor to US/CHINA/RUSSIA/EU unless the directive explicitly mentions that actor; prefer REGIONAL_1/REGIONAL_2 for local conflicts.",
     "- ALLIANCE / BLOC INTENT: If the directive asks to 'form an alliance bloc' / 'create an alliance' with multiple named countries, represent it as 1–2 DIPLOMACY actions (usually TREATY_PROPOSAL + MESSAGE/OFFER).",
     "  Use REGIONAL_1/REGIONAL_2 as proxies for local partners unless an explicit actor id is mentioned; include the named countries verbatim in your rationale strings.",
+    "- CRITICAL: Do NOT choose any MILITARY action unless the directive contains an explicit kinetic/force verb (attack, strike, bomb, invade, annex, occupy, seize, conquer, war) OR an explicit force-prep verb (mobilize, deploy troops, call up reserves, defensive posture).",
+    "  Phrases like 'territorial gain', 'secure leverage', 'pressure them', or 'be strong' are NOT sufficient to justify a strike/invasion. Map those to diplomacy/intel/institutions instead.",
   ].join("\n");
 
   const system = [
@@ -453,7 +455,46 @@ export async function llmParsePlayerDirective(args: {
 
   const actions = data.actions.slice(0, Math.max(0, args.remainingSlots));
   // Validate again (defensive)
-  const validated = PlayerActionSchema.array().parse(actions);
+  let validated = PlayerActionSchema.array().parse(actions);
+
+  // Safety rail: prevent accidental military actions from vague language.
+  const d = args.directive.toLowerCase();
+  const explicitKinetic = /\b(attack|strike|bomb|invade|annex|occupy|seize|conquer|war)\b/.test(d);
+  const explicitForcePrep = /\b(mobiliz(e|ation)|deploy|troops|call up|reserves|defensive posture)\b/.test(d);
+  const allowMilitary = explicitKinetic || explicitForcePrep;
+  if (!allowMilitary) {
+    const guessTargetActor = () => {
+      const entries = Object.entries(args.world.actors) as Array<[keyof typeof args.world.actors, (typeof args.world.actors)[keyof typeof args.world.actors]]>;
+      for (const [id, actor] of entries) {
+        const name = actor.name.toLowerCase();
+        const tokens = name.split(/\s+/).filter(Boolean);
+        if (tokens.some((t) => t.length >= 4 && d.includes(t))) return id;
+        if (d.includes(name)) return id;
+      }
+      return "REGIONAL_1" as const;
+    };
+    const targetActor = guessTargetActor();
+    const replaced: PlayerAction[] = [];
+    let changed = false;
+    for (const a of validated) {
+      if (a.kind !== "MILITARY") {
+        replaced.push(a);
+        continue;
+      }
+      changed = true;
+      replaced.push({
+        kind: "DIPLOMACY",
+        subkind: "MESSAGE",
+        targetActor,
+        topic: "security",
+        tone: "firm",
+        intensity: 2,
+        isPublic: false,
+      });
+    }
+    if (changed) validated = replaced.slice(0, Math.max(1, args.remainingSlots));
+  }
+
   return { actions: validated, rationale: data.rationale, llmRaw: raw };
 }
 
@@ -786,38 +827,6 @@ export async function llmGenerateResolution(args: {
     .slice(0, 4)
     .map((d) => qualitativeDelta({ label: d.label, delta: d.delta }));
 
-  const targets = Array.from(
-    new Set(args.translatedActions.map((a) => extractTargetFromSummary(a.summary)).filter(Boolean) as string[]),
-  ).slice(0, 2);
-
-  const eventSeeds: string[] = [];
-  for (const target of targets.length ? targets : ["the target state"]) {
-    // Keep these plausible and grounded; the model will pick 2–4 to treat as "what happened".
-    eventSeeds.push(
-      `A short, high-precision strike hit a military logistics node near ${target}'s main transport corridor; emergency services confirmed damage but downplayed casualties.`,
-    );
-    eventSeeds.push(
-      `Authorities tightened checkpoints around ${target}'s capital and major border crossings after reports of sabotage and attempted infiltration.`,
-    );
-    eventSeeds.push(
-      `Shipping insurers raised war-risk premiums affecting ${target}'s primary port; container backlogs formed and importers began hoarding fuel and staples.`,
-    );
-    eventSeeds.push(
-      `A senior economic official resigned after a bruising cabinet session over inflation and supply disruptions; rival factions leaked meeting notes to local press.`,
-    );
-    eventSeeds.push(
-      `Brazil quietly moved units to higher readiness near the border and opened a diplomatic backchannel warning against spillover into its riverine trade routes.`,
-    );
-  }
-  for (const partner of coalitionPartners) {
-    eventSeeds.push(
-      `${partner} established a quiet liaison channel (deconfliction + messaging alignment) and signaled conditional support if escalation remains bounded.`,
-    );
-    eventSeeds.push(
-      `Joint planning with ${partner} produced a shared public line and a private red-line map; leaks to regional press created pressure for visible coordination.`,
-    );
-  }
-
   const system = [
     "You write the end-of-turn resolution briefing for a geopolitical simulation.",
     "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
@@ -831,8 +840,8 @@ export async function llmGenerateResolution(args: {
     "Your narrative must state what happened, who escalated/de-escalated, what failed/held, and at least one political 'fall' (cabinet collapse, minister resignation, command shake-up, government crisis) IF domestic unrest/legitimacy worsened in the hidden guidance.",
     "If there was no sustained ground campaign, do NOT claim an entire country 'fell'. Instead describe partial collapses (local authority breakdown, party fracture, minister ouster, security services shake-up).",
     "Include at least 2 named places (cities, border crossings, ports, bases) relevant to the involved countries, and at least 2 external actors by name from PERCEPTIONS/THREATS.",
-    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events: what was hit, what moved, what shut down, what was announced/denied, who resigned, what sanctions package was drafted, what units were put on alert.",
-    "Use EVENT_SEEDS as factual detail: pick 2–4 seeds and weave them into the resolved-events portion (do not label them as 'seeds').",
+    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_CONTEXT_BEFORE/AFTER and ACTIONS_TAKEN.",
+    "CRITICAL CONSISTENCY: Do NOT invent strikes/invasions/mobilizations unless a MILITARY action was executed this turn.",
     "If COALITION_PARTNERS is non-empty, you MUST explicitly mention at least one partner by name in the resolved-events portion and show what coordination occurred (liaison, deconfliction, joint messaging, basing, logistics).",
     "If outcomes look counterintuitive, explain causality (timing lags, second-order effects, credibility costs) in-world.",
     "Hard constraint: perceptions must be 2–8 items. Each perceptions[].read MUST be <= 160 characters.",
@@ -859,8 +868,8 @@ export async function llmGenerateResolution(args: {
     "ACTIONS_TAKEN_THIS_TURN (in-world paraphrase; treat as fact for the resolved events):",
     JSON.stringify(actionsForLlm, null, 2),
     "",
-    "EVENT_SEEDS (pick 2–4; treat as factual chain-of-events for this turn; do NOT mention numbers or internal labels):",
-    JSON.stringify(eventSeeds.slice(0, 6), null, 2),
+    "ACTIONS_RAW (authoritative; do not quote enum labels; use only to stay consistent):",
+    JSON.stringify(args.translatedActions, null, 2),
     "",
     "SCORE_DELTAS (hidden guidance; do NOT quote numbers in narrative):",
     JSON.stringify(args.deltas, null, 2),
@@ -894,201 +903,130 @@ export async function llmGenerateResolution(args: {
     ),
   ].join("\n");
 
-  const { data, raw } = await chatJson({
-    system,
-    user,
-    schemaName: "LlmResolutionSchema",
-    validate: (obj) => {
-      // Be forgiving on common LLM failure modes: too many items / overly long lines.
-      if (typeof obj !== "object" || obj === null) return LlmResolutionSchema.parse(obj);
-      const o = obj as Record<string, unknown>;
-      const safeStr = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
-      const safeStrArr = (v: unknown, maxItems: number, maxLen: number) =>
-        Array.isArray(v) ? v.filter((x) => typeof x === "string").map((s) => String(s).trim().slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
+  const validateResolution = (obj: unknown) => {
+    if (typeof obj !== "object" || obj === null) return LlmResolutionSchema.parse(obj);
+    const o = obj as Record<string, unknown>;
+    const safeStr = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const safeStrArr = (v: unknown, maxItems: number, maxLen: number) =>
+      Array.isArray(v) ? v.filter((x) => typeof x === "string").map((s) => String(s).trim().slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
 
-      const narrative = Array.isArray(o.narrative)
-        ? o.narrative
-            .filter((x) => typeof x === "string")
-            .map((s) => String(s).slice(0, 220))
-            .slice(0, 18)
-        : o.narrative;
-      const threatsArr = safeStrArr(o.threats, 7, 180);
-      const nextMovesArr = safeStrArr(o.nextMoves, 6, 200);
+    const narrativeArr = Array.isArray(o.narrative)
+      ? o.narrative
+          .filter((x) => typeof x === "string")
+          .map((s) => String(s).slice(0, 220))
+          .slice(0, 18)
+      : [];
 
-      // Normalize perceptions objects + enforce max read length.
-      const perceptionsRaw = Array.isArray(o.perceptions) ? o.perceptions.slice(0, 8) : [];
-      const perceptionsArr = perceptionsRaw
-        .map((p) => {
-          if (typeof p !== "object" || p === null) return null;
-          const pr = p as Record<string, unknown>;
-          const actor = safeStr(pr.actor, 40) || "—";
-          const posture = safeStr(pr.posture, 12).toLowerCase();
-          const read = safeStr(pr.read, 160);
-          const okPosture = posture === "hostile" || posture === "neutral" || posture === "friendly" ? posture : "neutral";
-          if (!read) return null;
-          return { actor, posture: okPosture, read };
-        })
-        .filter(Boolean) as Array<{ actor: string; posture: "hostile" | "neutral" | "friendly"; read: string }>;
-
-      // Pad perceptions to min 2 using real actor shifts if needed.
-      while (perceptionsArr.length < 2) {
-        const s = args.actorShifts[perceptionsArr.length];
-        if (s) {
-          const trustDir = s.trustDelta > 0 ? "trust improved" : s.trustDelta < 0 ? "trust eroded" : "trust held";
-          const escDir =
-            s.escalationDelta > 0 ? "escalation appetite increased" : s.escalationDelta < 0 ? "escalation appetite cooled" : "escalation posture steady";
-          perceptionsArr.push({
-            actor: String(s.actor).slice(0, 40),
-            posture: (String(s.posture).toLowerCase() as "hostile" | "neutral" | "friendly") ?? "neutral",
-            read: `${trustDir}; ${escDir}. Messaging will reflect internal constraints.`,
-          });
-          continue;
-        }
-        perceptionsArr.push({
-          actor: "Foreign desks",
-          posture: "neutral",
-          read: "Outside capitals are waiting for confirmation and testing your red lines quietly.",
-        });
+    const scrubLine = (s: string) => {
+      let out = s.trim();
+      // Keep time-block headings intact (they include digits and dashes).
+      if (
+        out.startsWith("NEXT 72 HOURS:") ||
+        out.startsWith("2–4 WEEKS:") ||
+        out.startsWith("2–3 MONTHS:") ||
+        out.startsWith("4–6 MONTHS:")
+      ) {
+        return out.slice(0, 220);
       }
+      // Remove obvious internal action labels + numeric scoring leaks.
+      out = out.replace(/\b(LIMITED_STRIKE|FULL_INVASION|MOBILIZE|PROXY_SUPPORT|ARMS_PURCHASE|SURVEILLANCE|COUNTERINTEL|COVERT_OP)\b/g, "");
+      out = out.replace(/\bintensity\s*\d+\b/gi, "");
+      out = out.replace(/\(\s*[+-]?\d+[^)]*\)/g, "").trim();
+      out = out.replace(/\s[+-]\d{1,3}\b/g, "").trim();
+      out = out.replace(/\b\d{1,3}\s*(points?|pts)\b/gi, "").trim();
+      out = out.replace(/\b\d{1,3}\s*\/\s*100\b/g, "").trim();
+      // Collapse whitespace.
+      out = out.replace(/\s{2,}/g, " ").trim();
+      return out;
+    };
 
-      // Normalize directiveImpact + pad to min 2.
-      const diRaw = Array.isArray(o.directiveImpact) ? o.directiveImpact.slice(0, 8) : [];
-      const directiveImpactArr = diRaw
-        .map((it) => {
-          if (typeof it !== "object" || it === null) return null;
-          const r = it as Record<string, unknown>;
-          const directiveFragment = safeStr(r.directiveFragment, 120);
-          const translatedOps = safeStrArr(r.translatedOps, 4, 140);
-          const observedEffects = safeStrArr(r.observedEffects, 5, 160);
-          if (!directiveFragment || observedEffects.length === 0) return null;
-          return { directiveFragment, translatedOps, observedEffects };
-        })
-        .filter(Boolean) as Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }>;
+    const narrative = narrativeArr.map((s) => scrubLine(String(s))).filter((s) => s.length >= 8).slice(0, 18);
 
-      const ops = actionsForLlm.slice(0, 4);
-      while (directiveImpactArr.length < 2) {
-        if (directiveImpactArr.length === 0) {
-          directiveImpactArr.push({
-            directiveFragment: args.directive?.trim()?.slice(0, 120) || "Primary directive",
-            translatedOps: ops.slice(0, 2),
-            observedEffects: qualitativeTopDeltas.length
-              ? qualitativeTopDeltas.slice(0, 3)
-              : ["Immediate effects are visible, but second-order costs are still forming."],
-          });
-        } else {
-          directiveImpactArr.push({
-            directiveFragment: "Second-order effects",
-            translatedOps: ops.slice(2, 4),
-            observedEffects: qualitativeTopDeltas.length
-              ? qualitativeTopDeltas.slice(-2)
-              : ["Delayed effects will land across financing, legitimacy, and external posture."],
-          });
-        }
+    const perceptionsRaw = Array.isArray(o.perceptions) ? o.perceptions.slice(0, 8) : [];
+    const perceptions = perceptionsRaw
+      .map((p) => {
+        if (typeof p !== "object" || p === null) return null;
+        const pr = p as Record<string, unknown>;
+        const actor = safeStr(pr.actor, 40) || "—";
+        const posture = safeStr(pr.posture, 12).toLowerCase();
+        const read = safeStr(pr.read, 160);
+        const okPosture = posture === "hostile" || posture === "neutral" || posture === "friendly" ? posture : "neutral";
+        if (!read) return null;
+        return { actor, posture: okPosture, read };
+      })
+      .filter(Boolean) as Array<{ actor: string; posture: "hostile" | "neutral" | "friendly"; read: string }>;
+
+    const diRaw = Array.isArray(o.directiveImpact) ? o.directiveImpact.slice(0, 8) : [];
+    const directiveImpact = diRaw
+      .map((it) => {
+        if (typeof it !== "object" || it === null) return null;
+        const r = it as Record<string, unknown>;
+        const directiveFragment = safeStr(r.directiveFragment, 120);
+        const translatedOps = safeStrArr(r.translatedOps, 4, 140);
+        const observedEffects = safeStrArr(r.observedEffects, 5, 160);
+        if (!directiveFragment || observedEffects.length === 0) return null;
+        return { directiveFragment, translatedOps, observedEffects };
+      })
+      .filter(Boolean) as Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }>;
+
+    const normalized = {
+      headline: safeStr(o.headline, 160),
+      narrative,
+      directiveImpact,
+      perceptions,
+      threats: safeStrArr(o.threats, 7, 180),
+      nextMoves: safeStrArr(o.nextMoves, 6, 200),
+    };
+
+    const parsed = LlmResolutionSchema.parse(normalized);
+
+    // Hard requirements (no seeded fallback): enforce, or fail and retry.
+    const hasTimeline =
+      parsed.narrative.some((s) => s.startsWith("NEXT 72 HOURS:")) &&
+      parsed.narrative.some((s) => s.startsWith("2–4 WEEKS:")) &&
+      parsed.narrative.some((s) => s.startsWith("2–3 MONTHS:")) &&
+      parsed.narrative.some((s) => s.startsWith("4–6 MONTHS:"));
+    if (!hasTimeline) throw new Error("Resolution narrative missing required timeline blocks.");
+    if (parsed.narrative.length < 10) throw new Error("Resolution narrative too short (min 10 lines).");
+
+    const kineticKinds = new Set(["LIMITED_STRIKE", "FULL_INVASION", "MOBILIZE", "PROXY_SUPPORT", "ARMS_PURCHASE", "DEFENSIVE_POSTURE"]);
+    const allowKinetic = args.translatedActions.some((a) => kineticKinds.has(String(a.kind || "").toUpperCase()));
+    if (!allowKinetic) {
+      const forbidden = /\b(strike|bomb|invasion|invade|air\s*raid|missile|artillery|mobiliz|reserve call|troop|ground offensive)\b/i;
+      if (parsed.narrative.some((s) => forbidden.test(s))) {
+        throw new Error("Resolution invented kinetic action despite no MILITARY action executed.");
       }
+    }
 
-      // Ensure threats/nextMoves meet minimums.
-      const threats = threatsArr.length ? threatsArr : args.threats.slice(0, 7);
-      while (threats.length < 2) threats.push("Pressure vector: external reactions remain fluid.");
-      const nextMoves = nextMovesArr.length ? nextMovesArr : ["Clarify intent publicly with a bounded message.", "Harden logistics and financing against retaliation."];
+    return parsed;
+  };
 
-      const narrativeArr = Array.isArray(narrative) ? (narrative as string[]) : [];
-      const scrubLine = (s: string) => {
-        let out = s.trim();
-        // Keep the required time-block headings intact (they include digits and dashes).
-        if (
-          out.startsWith("NEXT 72 HOURS:") ||
-          out.startsWith("2–4 WEEKS:") ||
-          out.startsWith("2–3 MONTHS:") ||
-          out.startsWith("4–6 MONTHS:")
-        ) {
-          return out.slice(0, 220);
-        }
-        // Remove obvious internal action labels.
-        out = out.replace(/\b(LIMITED_STRIKE|FULL_INVASION|MOBILIZE|PROXY_SUPPORT|ARMS_PURCHASE|SURVEILLANCE|COUNTERINTEL|COVERT_OP)\b/g, "");
-        // Remove "intensity" phrasing.
-        out = out.replace(/\bintensity\s*\d+\b/gi, "");
-        // Remove parenthetical numeric deltas like "(+12)" or "(-4)".
-        out = out.replace(/\(\s*[+-]?\d+[^)]*\)/g, "").trim();
-        // Remove explicit "+16" style tokens.
-        out = out.replace(/\s[+-]\d{1,3}\b/g, "").trim();
-        // Remove "16 points"/"16 pts"/"16/100" style score references.
-        out = out.replace(/\b\d{1,3}\s*(points?|pts)\b/gi, "").trim();
-        out = out.replace(/\b\d{1,3}\s*\/\s*100\b/g, "").trim();
-        // Replace immersion-breaking button-language with in-world phrasing.
-        out = out.replace(/\bprivate mobilization\b/gi, "reserve call-ups and unit movements");
-        out = out.replace(/\bmobilization\b/gi, "reserve call-ups");
-        out = out.replace(/\blimited military strike\b/gi, "precision strikes");
-        out = out.replace(/\blimited strike\b/gi, "precision strikes");
-        out = out.replace(/\bpublicly acknowledged\b/gi, "in a statement");
-        out = out.replace(/\bnarrative management\b/gi, "public messaging discipline");
-        out = out.replace(/\bcontrolled escalation\b/gi, "escalation control");
-        out = out.replace(/\bfocusing on\b/gi, "targeting");
-        out = out.replace(/\bstrategic locations?\b/gi, "key sites");
-        out = out.replace(/\bstrategic\b/gi, "key");
-        out = out.replace(/^\s*Operations?\b[: ]*/i, "").trim();
-        // Reduce hedging language (player asked for more sim-like certainty).
-        out = out.replace(/\bwill likely\b/gi, "will");
-        out = out.replace(/\blikely\b/gi, "");
-        out = out.replace(/\bmay\b/gi, "will");
-        out = out.replace(/\bmight\b/gi, "will");
-        out = out.replace(/\bcould\b/gi, "will");
-        // Collapse whitespace.
-        out = out.replace(/\s{2,}/g, " ").trim();
-        return out;
-      };
-
-      const trimmedNarrative = narrativeArr
-        .map((s) => scrubLine(String(s)))
-        .filter((s) => s.length >= 8)
-        .slice(0, 18);
-
-      const ensureLine = (prefix: string, fallback: string) => {
-        if (!trimmedNarrative.some((s) => s.startsWith(prefix))) trimmedNarrative.push(`${prefix} ${fallback}`.slice(0, 220));
-      };
-
-      const t0 = targets[0] || "the target state";
-      const a0 = args.actorShifts[0]?.actor ? String(args.actorShifts[0]!.actor).slice(0, 40) : "Regional capitals";
-      const a1 = args.actorShifts[1]?.actor ? String(args.actorShifts[1]!.actor).slice(0, 40) : "Major powers";
-
-      // Enforce time blocks even if the model forgets.
-      ensureLine(
-        "NEXT 72 HOURS:",
-        `Border and port security hardens around ${t0}; insurers reprice risk; ${a0} tests your red lines through messaging and readiness moves.`,
-      );
-      ensureLine(
-        "2–4 WEEKS:",
-        `Trade friction and protests intensify; cabinet discipline frays; ${a1} begins drafting conditional packages (sanctions, mediation, or resupply) tied to de-escalation steps.`,
-      );
-      ensureLine(
-        "2–3 MONTHS:",
-        `Supply constraints feed inflation and debt stress; rival factions exploit shortages; external actors convert leverage into explicit demands on posture, basing, or oversight.`,
-      );
-      ensureLine(
-        "4–6 MONTHS:",
-        `Sustained readiness strains finances and legitimacy; risk of leadership shake-up rises; regional alignment shifts harden as neighbors build contingency plans for spillover.`,
-      );
-
-      // Pad to a detailed minimum so the narrative box isn't sparse.
-      while (trimmedNarrative.length < 12) {
-        trimmedNarrative.push(
-          "Assessment: second-order costs begin to surface through financing channels, elite discipline, and external leverage; timelines differ by sector.",
-        );
-      }
-
-      const normalized = {
-        ...o,
-        narrative: trimmedNarrative.slice(0, 18),
-        threats: threats.slice(0, 7),
-        nextMoves: nextMoves.slice(0, 6),
-        perceptions: perceptionsArr.slice(0, 8),
-        directiveImpact: directiveImpactArr.slice(0, 8),
-      };
-      return LlmResolutionSchema.parse(normalized);
-    },
-    temperature: 0.6,
-  });
-
-  return { data, llmRaw: raw };
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : [
+              "",
+              "REPAIR MODE:",
+              "Your previous response failed validation. Fix it and return ONLY valid JSON.",
+              "Do NOT add extra keys. Do NOT add commentary. Follow all narrative constraints exactly.",
+              lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : "",
+            ].join("\n");
+      const out = await chatJson({
+        system: system + extra,
+        user,
+        schemaName: attempt === 0 ? "LlmResolutionSchema" : "LlmResolutionSchema_retry",
+        validate: validateResolution,
+        temperature: attempt === 0 ? 0.55 : 0.2,
+      });
+      return { data: out.data, llmRaw: out.raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM resolution failed");
 }
 
 export async function llmGenerateWorldGenScenario(args: {

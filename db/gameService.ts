@@ -915,10 +915,12 @@ export async function getResolutionReport(
     .slice(0, 4)
     .map((t) => `Pressure vector: ${t.name}`);
 
-  const translatedActions = (row.playerActions as unknown as PlayerAction[]).map((a) => ({
-    kind: a.kind,
-    summary: summarizeAction(a),
-  }));
+  const translatedActions = (row.playerActions as unknown as PlayerAction[]).map((a) => {
+    const subkind = (a as unknown as { subkind?: unknown }).subkind;
+    // For LLM consumption we want the most specific action label available.
+    const kind = typeof subkind === "string" && subkind.trim() ? subkind.trim() : a.kind;
+    return { kind, summary: summarizeAction(a) };
+  });
 
   const base = {
     turnNumber,
