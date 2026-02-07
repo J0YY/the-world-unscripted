@@ -18,6 +18,11 @@ export default function BriefingFeed({ briefings }: { briefings: UiBriefingItem[
         </h2>
       </div>
       <div className="flex-1 overflow-y-auto p-2 space-y-2 max-h-[400px] lg:max-h-none">
+        {briefings.length === 0 ? (
+          <div className="p-2 bg-[var(--ds-background-100)] border border-[var(--ds-gray-alpha-200)] rounded text-xs font-mono text-[var(--ds-gray-700)]">
+            Generating briefing feed…
+          </div>
+        ) : null}
         {briefings.map((briefing) => (
           <div
             key={briefing.id}

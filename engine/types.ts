@@ -220,6 +220,14 @@ export type Briefing = {
 
 export type WorldState = {
   version: 1;
+  /**
+   * Determines whether turn-start player-facing content (briefing + incoming events)
+   * is generated deterministically by the engine or provided by an LLM layer.
+   *
+   * - "engine": use `engine/turnStart.ts` (deterministic templates)
+   * - "llm": leave content empty; db/llm layer fills it
+   */
+  turnStartGenerator?: "engine" | "llm";
   rng: import("./rng").RngState;
   turn: number; // current turn number (1-based)
   player: PlayerCountryTrue;

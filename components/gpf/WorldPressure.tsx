@@ -3,16 +3,21 @@
 export default function WorldPressure({
   pressureIndex,
   deltaPerTurn,
+  turn,
   narrativeGravity,
   systemStrain,
 }: {
   pressureIndex: number;
-  deltaPerTurn: number;
+  deltaPerTurn?: number | null;
+  turn: number;
   narrativeGravity: number;
   systemStrain: number;
 }) {
   const pressureColor =
     pressureIndex >= 75 ? "text-red-500" : pressureIndex >= 50 ? "text-amber-500" : "text-green-500";
+
+  const showDelta = turn > 1 && Number.isFinite(deltaPerTurn as number);
+  const d = (typeof deltaPerTurn === "number" ? deltaPerTurn : 0) as number;
 
   return (
     <div className="space-y-4">
@@ -34,13 +39,15 @@ export default function WorldPressure({
             style={{ width: `${pressureIndex}%` }}
           />
         </div>
-        <div className="text-sm text-[var(--ds-gray-900)] font-mono tabular-nums">
-          <span className={deltaPerTurn >= 0 ? "text-amber-500" : "text-green-500"}>
-            {deltaPerTurn >= 0 ? "+" : ""}
-            {deltaPerTurn}%
-          </span>{" "}
-          / turn
-        </div>
+        {showDelta ? (
+          <div className="text-sm text-[var(--ds-gray-900)] font-mono tabular-nums">
+            <span className={d > 0 ? "text-red-500" : d < 0 ? "text-green-500" : "text-[var(--ds-gray-700)]"}>
+              {d >= 0 ? "+" : ""}
+              {d}%
+            </span>{" "}
+            / turn
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-3 pt-2 border-t border-[var(--ds-gray-alpha-200)]">

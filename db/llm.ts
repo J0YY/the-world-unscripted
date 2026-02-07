@@ -270,12 +270,19 @@ export async function llmGenerateTurnPackage(args: {
   phase: "TURN_1" | "TURN_N";
   playerDirective?: string;
   lastTurnPublicResolution?: string;
+  memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
 }): Promise<{ briefing: WorldState["current"]["briefing"]; events: IncomingEvent[]; llmRaw: unknown }> {
   const system = [
     "You are the turn generator for a grounded geopolitical simulation.",
     "Tone: unsentimental, Reuters/cabinet memo style, operational language.",
     "Output MUST be strict JSON object only.",
     "You must generate: briefing + 2-5 incoming events.",
+    "NON-NEGOTIABLE SPECIFICITY:",
+    "- Every item in briefing.headlines, briefing.domesticRumors, briefing.diplomaticMessages, and briefing.intelBriefs[].text MUST mention at least one specific proper noun from the provided context: the player country name, a named neighbor, or a named external actor.",
+    "- At least 2 items must mention a neighbor by name.",
+    "- At least 2 items must mention an external actor by name AND reflect their posture toward the player (friendly/neutral/hostile) using the context buckets.",
+    "- Tie items to what happened last turn: reference LAST_TURN_PUBLIC_RESOLUTION and RECENT_TURNS_MEMORY as causal background (without quoting scores).",
+    "- Avoid generic filler like 'price controls are being discussed' unless you name the institution/actor pushing it (central bank, finance ministry, ruling party caucus, major importer, port authority, etc.).",
     "Hard constraints:",
     "- Include at least 1 international development, 1 domestic development, and 1 intelligence note with uncertainty.",
     "- Do NOT include any numeric ratings/scores (no '72/100', no indices). Use qualitative buckets only: critical/low/moderate/high.",
@@ -285,10 +292,12 @@ export async function llmGenerateTurnPackage(args: {
   ].join("\n");
 
   const context = summarizeWorldForLlm(args.world);
+  const memory = Array.isArray(args.memory) ? args.memory.slice(-3) : [];
   const user = [
     `PHASE: ${args.phase}`,
     args.playerDirective ? `PLAYER_DIRECTIVE: ${args.playerDirective}` : "PLAYER_DIRECTIVE: (none)",
     args.lastTurnPublicResolution ? `LAST_TURN_PUBLIC_RESOLUTION:\n${args.lastTurnPublicResolution}` : "",
+    memory.length ? `RECENT_TURNS_MEMORY:\n${JSON.stringify(memory, null, 2)}` : "RECENT_TURNS_MEMORY: []",
     "",
     "CONTEXT (qualitative only; do not invent numeric scores):",
     JSON.stringify(context, null, 2),
@@ -320,37 +329,97 @@ export async function llmGenerateTurnPackage(args: {
     ),
   ].join("\n");
 
-  const { data, raw } = await chatJson({
-    system,
-    user,
-    schemaName: "LlmGenerateTurnPackageSchema",
-    validate: (obj) => LlmGenerateTurnPackageSchema.parse(obj),
-    temperature: 0.85,
-  });
+  const names = [
+    context.player.name,
+    ...(Array.isArray(context.player.neighbors) ? context.player.neighbors : []),
+    ...(Array.isArray(context.actors) ? context.actors.map((a) => a.name) : []),
+  ]
+    .filter((x) => typeof x === "string")
+    .map((s) => String(s).trim())
+    .filter(Boolean)
+    .slice(0, 24);
 
-  // Safety: fail closed if model leaks obvious numeric truth patterns into player-visible text.
-  if (leaksNumbers(data.briefing.text)) throw new Error("LLM briefing leaked numeric scoring; disabled for this turn");
+  const mentionsAny = (s: string) => {
+    const t = s.toLowerCase();
+    return names.some((n) => n.length >= 3 && t.includes(n.toLowerCase()));
+  };
 
-  const turn = args.world.turn;
-  const events: IncomingEvent[] = data.events.map((e, idx) => ({
-    id: `T${turn}-E${idx}-LLM-${e.type}`,
-    type: e.type as IncomingEvent["type"],
-    actor: e.actor as IncomingEvent["actor"],
-    urgency: e.urgency,
-    visibleDescription: e.visibleDescription,
-    playerChoicesHints: e.playerChoicesHints,
-    hiddenPayload: {
-      effects: e.effects as IncomingEvent["hiddenPayload"]["effects"],
-      scheduled: (e.scheduled ?? []).map((s, j) => ({
-        id: `T${turn}-SC${idx}-${j}-${s.kind}`,
-        dueTurn: turn + s.dueInTurns,
-        kind: s.kind,
-        payload: s.payload ?? {},
-      })),
-    },
-  }));
+  const validateTurnPkg = (obj: unknown) => {
+    const parsed = LlmGenerateTurnPackageSchema.parse(obj);
+    // Safety: fail closed if model leaks obvious numeric truth patterns into player-visible text.
+    if (leaksNumbers(parsed.briefing.text)) throw new Error("LLM briefing leaked numeric scoring; disabled for this turn");
 
-  return { briefing: data.briefing, events, llmRaw: raw };
+    const allLines: string[] = [
+      ...parsed.briefing.headlines,
+      ...parsed.briefing.domesticRumors,
+      ...parsed.briefing.diplomaticMessages,
+      ...parsed.briefing.intelBriefs.map((b) => b.text),
+    ];
+    const missing = allLines.filter((l) => !mentionsAny(String(l)));
+    if (missing.length) {
+      throw new Error("Briefing too generic: some lines did not mention player/neighbor/actor names from context.");
+    }
+    const neighbors = Array.isArray(context.player.neighbors) ? context.player.neighbors : [];
+    const neighborMentions = allLines.filter((l) => neighbors.some((n) => String(l).toLowerCase().includes(String(n).toLowerCase())));
+    if (neighbors.length && neighborMentions.length < 2) {
+      throw new Error("Briefing missing neighbor-specific items (need >=2 neighbor mentions).");
+    }
+    const actorNames = Array.isArray(context.actors) ? context.actors.map((a) => a.name) : [];
+    const actorMentions = allLines.filter((l) => actorNames.some((n) => String(l).toLowerCase().includes(String(n).toLowerCase())));
+    if (actorNames.length && actorMentions.length < 2) {
+      throw new Error("Briefing missing actor-specific items (need >=2 external actor mentions).");
+    }
+    return parsed;
+  };
+
+  let lastErr: unknown = null;
+  const temps = [0.85, 0.6, 0.5, 0.4];
+  for (let attempt = 0; attempt < temps.length; attempt++) {
+    try {
+      const extra =
+        attempt === 0
+          ? ""
+          : [
+              "",
+              "REPAIR MODE:",
+              "Your previous output was rejected for being too generic.",
+              "Regenerate the ENTIRE JSON, keeping the same schema, but ensure every line contains specific names from context.",
+              lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : "",
+            ].join("\n");
+      const { data, raw } = await chatJson({
+        system: system + extra,
+        user,
+        schemaName: attempt === 0 ? "LlmGenerateTurnPackageSchema" : `LlmGenerateTurnPackageSchema_retry_${attempt}`,
+        validate: validateTurnPkg,
+        temperature: temps[attempt] ?? 0.5,
+      });
+
+      const turn = args.world.turn;
+      const events: IncomingEvent[] = data.events.map((e, idx) => ({
+        id: `T${turn}-E${idx}-LLM-${e.type}`,
+        type: e.type as IncomingEvent["type"],
+        actor: e.actor as IncomingEvent["actor"],
+        urgency: e.urgency,
+        visibleDescription: e.visibleDescription,
+        playerChoicesHints: e.playerChoicesHints,
+        hiddenPayload: {
+          effects: e.effects as IncomingEvent["hiddenPayload"]["effects"],
+          scheduled: (e.scheduled ?? []).map((s, j) => ({
+            id: `T${turn}-SC${idx}-${j}-${s.kind}`,
+            dueTurn: turn + s.dueInTurns,
+            kind: s.kind,
+            payload: s.payload ?? {},
+          })),
+        },
+      }));
+
+      return { briefing: data.briefing, events, llmRaw: raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM turn package failed");
+
 }
 
 export async function llmParsePlayerDirective(args: {
@@ -372,7 +441,9 @@ export async function llmParsePlayerDirective(args: {
     "- Output strict JSON only.",
     "- Always return 1..remainingSlots actions.",
     "- Use intensity 1-3. Choose isPublic (true/false).",
-    "- If the directive asks for something too extreme/illegal/impossible, map it to the closest allowed action(s) instead of failing.",
+    "- If the directive asks for something too extreme/impossible, map it to the closest allowed action(s) instead of failing.",
+    "- IMPORTANT: The simulation includes illegal/unethical actions. Do NOT refuse or sanitize on morality grounds. Model the intent using allowed actions.",
+    "  Examples: kidnapping/abduction/extortion/assassination/sabotage are typically INTEL: COVERT_OP (and must be private).",
     "- IMPORTANT TARGETING: If the directive names a country/region that is NOT one of the actor ids, put that place name into targetRegion (free text).",
     "- Do NOT set targetActor to US/CHINA/RUSSIA/EU unless the directive explicitly mentions that actor; prefer REGIONAL_1/REGIONAL_2 for local conflicts.",
     "- ALLIANCE / BLOC INTENT: If the directive asks to 'form an alliance bloc' / 'create an alliance' with multiple named countries, represent it as 1–2 DIPLOMACY actions (usually TREATY_PROPOSAL + MESSAGE/OFFER).",
@@ -788,84 +859,29 @@ export async function llmGenerateResolution(args: {
 
   const directiveIntents = args.directive ? extractDirectiveIntents(args.directive) : [];
 
-  const isBadWhenHighLabel = (label: string) => {
-    const l = String(label || "").toLowerCase();
-    return (
-      l.includes("unrest") ||
-      l.includes("inflation") ||
-      l.includes("debt") ||
-      l.includes("strain") ||
-      l.includes("pressure") ||
-      l.includes("corruption")
-    );
-  };
-
-  const qualitativeDelta = (d: { label: string; delta: number }) => {
-    const abs = Math.abs(d.delta);
-    const intensity = abs >= 10 ? "sharply" : abs >= 5 ? "notably" : "slightly";
-    const badWhenHigh = isBadWhenHighLabel(d.label);
-    const improved = badWhenHigh ? d.delta < 0 : d.delta > 0;
-    const verb = improved ? "improved" : "deteriorated";
-    return `${d.label} ${verb} ${intensity}`.trim();
-  };
-
-  const extractTargetFromSummary = (summary: string): string | null => {
-    const s = String(summary || "");
-    const m1 = s.match(/\bin\s+([A-Za-z][A-Za-z .'-]{1,40})/i);
-    if (m1?.[1]) return m1[1].trim();
-    const m2 = s.match(/\bagainst\s+([A-Za-z][A-Za-z .'-]{1,40})/i);
-    if (m2?.[1]) return m2[1].trim();
-    return null;
-  };
-
-  const paraphraseAction = (a: { kind: string; summary: string }): string => {
-    const kind = String(a.kind || "").toUpperCase();
-    const target = extractTargetFromSummary(a.summary) || "the target state";
-    switch (kind) {
-      case "LIMITED_STRIKE":
-        return `Carried out a short, high-precision strike package against ${target} (selected military/logistics nodes; calibrated to signal capability without committing to a full campaign).`;
-      case "FULL_INVASION":
-        return `Pushed a combined-arms offensive into ${target}, attempting to seize terrain and force political capitulation through sustained pressure.`;
-      case "MOBILIZE":
-        return `Activated a surge posture: reserve call-ups, unit repositioning, logistics activation, and internal security tightening tied to ${target}.`;
-      case "PROXY_SUPPORT":
-        return `Expanded deniable support to aligned networks connected to ${target} (financing, materiel, and advisors routed through intermediaries).`;
-      case "ARMS_PURCHASE":
-        return `Accelerated emergency procurement and resupply linked to operations around ${target}, prioritizing munitions, ISR, and sustainment.`;
-      case "SURVEILLANCE":
-        return `Increased ISR coverage and targeting collection focused on ${target} (signals, overhead, and HUMINT tasking) to reduce uncertainty.`;
-      case "COUNTERINTEL":
-        return `Ordered a counterintelligence sweep to disrupt hostile penetration and leaks associated with ${target}-related operations.`;
-      case "COVERT_OP":
-        return `Ran a deniable disruption operation tied to ${target} (pressure points selected for leverage rather than visibility).`;
-      default:
-        return `Executed a calibrated coercive action linked to ${target}, emphasizing control of escalation and narrative discipline.`;
-    }
-  };
-
-  const actionsForLlm = args.translatedActions.map(paraphraseAction).slice(0, 6);
-  const qualitativeTopDeltas = [...args.deltas]
-    .filter((d) => Number.isFinite(d.delta) && d.delta !== 0)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, 4)
-    .map((d) => qualitativeDelta({ label: d.label, delta: d.delta }));
+  // IMPORTANT: Do not inject our own prose templates for "what actions occurred".
+  // Those templates make the output feel hard-coded. Give the model only terse,
+  // engine-derived summaries as hidden grounding and let it write the narrative
+  // directly from the player's directive + world context.
+  const actionsForLlm = args.translatedActions.map((a) => a.summary).slice(0, 6);
 
   const system = [
     "You write the end-of-turn resolution briefing for a geopolitical simulation.",
     "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
     "Write like a classified after-action memo: specific, operational, grounded. No fantasy.",
-    "PRIMARY OBJECTIVE: directly address the player's directive. The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests).",
+    "PRIMARY OBJECTIVE: respond to the PLAYER_DIRECTIVE as if it were pasted into ChatGPT, but in-world and after-action (state what happened, with concrete details).",
+    "The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests) and say what happened for each.",
     "You MUST cover every item in DIRECTIVE_INTENTS somewhere in the narrative (verbatim or close paraphrase).",
     "Be concrete and decisive. Avoid hedging words like 'may', 'might', 'could', 'likely' anywhere (including forecasts). Use firm projections ('will', 'expect', 'is set to') instead.",
     "Do NOT reveal internal raw state dumps.",
     "DO NOT mention any internal action classifications, enum names, or parameters (no 'LIMITED_STRIKE', no 'MOBILIZE', no 'intensity').",
     "DO NOT mention scores, indices, deltas, or any numeric rating changes in the narrative. Keep it in-world.",
-    "You may use the provided deltas/actions only as hidden guidance to stay consistent, but never quote them.",
+    "You may use the provided world context / deltas / action summaries only as hidden grounding to stay consistent, but never quote them.",
     "Do not use game-y button language like 'public/private', 'limited strike', or 'mobilization' as labels. Describe concrete actions (what moved, what was hit, what was announced, what was denied).",
     "Your narrative must state what happened, who escalated/de-escalated, what failed/held, and at least one political 'fall' (cabinet collapse, minister resignation, command shake-up, government crisis) IF domestic unrest/legitimacy worsened in the hidden guidance.",
     "If there was no sustained ground campaign, do NOT claim an entire country 'fell'. Instead describe partial collapses (local authority breakdown, party fracture, minister ouster, security services shake-up).",
     "Include at least 2 named places (cities, border crossings, ports, bases) relevant to the involved countries, and at least 2 external actors by name from PERCEPTIONS/THREATS.",
-    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_CONTEXT_BEFORE/AFTER and ACTIONS_TAKEN.",
+    "Avoid abstract/meta phrasing ('strategic locations', 'managing escalation', 'controlling the narrative', 'focused on'). Replace with tangible events grounded in WORLD_CONTEXT_BEFORE/AFTER and the directive.",
     "CRITICAL CONSISTENCY: Do NOT invent strikes/invasions/mobilizations unless a MILITARY action was executed this turn.",
     "If COALITION_PARTNERS is non-empty, you MUST explicitly mention at least one partner by name in the resolved-events portion and show what coordination occurred (liaison, deconfliction, joint messaging, basing, logistics).",
     "If outcomes look counterintuitive, explain causality (timing lags, second-order effects, credibility costs) in-world.",
@@ -877,6 +893,7 @@ export async function llmGenerateResolution(args: {
     "- 2–4 WEEKS:",
     "- 2–3 MONTHS:",
     "- 4–6 MONTHS:",
+    "Formatting hard rule: include ALL four time-block lines verbatim as prefixes. Easiest: make the FINAL 4 narrative array entries start with those prefixes.",
     "Each time block line must include at least one concrete impact on: economy, domestic politics, security/war, or external posture.",
     "Minimum narrative length: 10 lines. Maximum: 18 lines.",
   ].join("\n");
@@ -893,10 +910,10 @@ export async function llmGenerateResolution(args: {
     "DIRECTIVE_INTENTS (must be explicitly addressed):",
     JSON.stringify(directiveIntents, null, 2),
     "",
-    "ACTIONS_TAKEN_THIS_TURN (in-world paraphrase; treat as fact for the resolved events):",
+    "ENGINE_ACTION_SUMMARIES (hidden grounding only; do NOT echo verbatim; directive is primary):",
     JSON.stringify(actionsForLlm, null, 2),
     "",
-    "ACTIONS_RAW (authoritative; do not quote enum labels; use only to stay consistent):",
+    "ACTIONS_RAW (authoritative grounding; do not quote enum labels; do not let this override the directive):",
     JSON.stringify(args.translatedActions, null, 2),
     "",
     "SCORE_DELTAS (hidden guidance; do NOT quote numbers in narrative):",
@@ -1030,7 +1047,7 @@ export async function llmGenerateResolution(args: {
   };
 
   let lastErr: unknown = null;
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const extra =
         attempt === 0
@@ -1040,6 +1057,7 @@ export async function llmGenerateResolution(args: {
               "REPAIR MODE:",
               "Your previous response failed validation. Fix it and return ONLY valid JSON.",
               "Do NOT add extra keys. Do NOT add commentary. Follow all narrative constraints exactly.",
+              "You MUST include the 4 required time-block lines. Put them as the LAST 4 narrative entries.",
               lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : "",
             ].join("\n");
       const out = await chatJson({
@@ -1047,7 +1065,7 @@ export async function llmGenerateResolution(args: {
         user,
         schemaName: attempt === 0 ? "LlmResolutionSchema" : "LlmResolutionSchema_retry",
         validate: validateResolution,
-        temperature: attempt === 0 ? 0.55 : 0.2,
+        temperature: attempt === 0 ? 0.45 : attempt === 1 ? 0.25 : 0.15,
       });
       return { data: out.data, llmRaw: out.raw };
     } catch (e) {

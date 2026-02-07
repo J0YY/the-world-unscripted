@@ -20,7 +20,8 @@ function deltaClass(label: string, delta: number) {
 }
 
 function arrowSymbol(delta: number) {
-  if (!Number.isFinite(delta) || delta === 0) return "—";
+  // Avoid a dash that looks like a negative sign in the UI.
+  if (!Number.isFinite(delta) || delta === 0) return "↔";
   return delta > 0 ? "▲" : "▼";
 }
 
@@ -31,14 +32,13 @@ export default function TurnDeltasPanel({ snapshot }: { snapshot: GameSnapshot }
   const turnResolved = snapshot.turn - 1;
 
   useEffect(() => {
-    if (turnResolved < 1) {
-      setRows([]);
-      setErr(null);
-      return;
-    }
+    if (turnResolved < 1) return;
     const ac = new AbortController();
-    setErr(null);
-    setRows(null);
+    // Avoid synchronous setState inside the effect body (eslint rule); schedule it.
+    queueMicrotask(() => {
+      setErr(null);
+      setRows(null);
+    });
     apiResolutionReport(snapshot.gameId, turnResolved, { signal: ac.signal })
       .then((r) => {
         const rep = r as ResolutionReportLite;

@@ -380,7 +380,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   return { US, CHINA, RUSSIA, EU, REGIONAL_1: regional1, REGIONAL_2: regional2 };
 }
 
-export function createInitialWorld(seed: string): WorldState {
+export function createInitialWorld(seed: string, opts?: { turnStartGenerator?: WorldState["turnStartGenerator"] }): WorldState {
   const rng = createRngState(seed);
   const scenario = rngPick(rng, scenarios);
 
@@ -422,6 +422,7 @@ export function createInitialWorld(seed: string): WorldState {
 
   const world: WorldState = {
     version: 1,
+    turnStartGenerator: opts?.turnStartGenerator ?? "engine",
     rng,
     turn: 1,
     player: {
@@ -506,10 +507,14 @@ export function createInitialWorld(seed: string): WorldState {
     },
   };
 
-  // Generate the initial briefing + incoming events (Turn 1 must contain a credible pressure event).
-  const { briefing, events } = generateBriefingAndEvents(world, { forcePressureEvent: true });
-  world.current.briefing = briefing;
-  world.current.incomingEvents = events;
+  // Turn-start content can be engine-driven or LLM-driven.
+  // If LLM-driven, leave it empty here and let the db layer fill it.
+  if (world.turnStartGenerator !== "llm") {
+    // Generate the initial briefing + incoming events (Turn 1 must contain a credible pressure event).
+    const { briefing, events } = generateBriefingAndEvents(world, { forcePressureEvent: true });
+    world.current.briefing = briefing;
+    world.current.incomingEvents = events;
+  }
 
   return world;
 }

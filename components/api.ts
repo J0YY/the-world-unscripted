@@ -45,6 +45,15 @@ export async function apiTimeline(
   return jsonFetch(`/api/game/timeline?${qs.toString()}`);
 }
 
+export async function apiPressureDelta(
+  gameId: string,
+  turn: number,
+  init?: Pick<RequestInit, "signal">,
+): Promise<{ deltaPerTurn: number | null }> {
+  const qs = new URLSearchParams({ gameId: String(gameId), turn: String(turn) });
+  return jsonFetch(`/api/game/pressure-delta?${qs.toString()}`, init);
+}
+
 export async function apiResolutionReport(
   gameId: string,
   turnNumber: number,

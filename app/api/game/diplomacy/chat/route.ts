@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/db/client";
 import { llmDiplomacyChat, llmMode } from "@/db/llm";
-import type { GameSnapshot, WorldState, ForeignPower } from "@/engine";
+import type { GameSnapshot, WorldState } from "@/engine";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
   try {
+    if (llmMode() !== "ON") {
+      return NextResponse.json({ error: "AI mode is OFF" }, { status: 400 });
+    }
     const { gameId, nationId, message } = await req.json();
     if (!gameId || !nationId || !message) {
       return NextResponse.json({ error: "Missing fields" }, { status: 400 });
@@ -70,9 +73,15 @@ export async function POST(req: Request) {
     }
 
     if (headline) {
+        // `world.current.briefing` is expected to exist, but guard against old shapes.
         if (!world.current.briefing) {
-             // @ts-ignore
-             world.current.briefing = { headlines: [], intel: [] }; 
+          world.current.briefing = {
+            text: "",
+            headlines: [],
+            domesticRumors: [],
+            diplomaticMessages: [],
+            intelBriefs: [],
+          };
         }
         world.current.briefing.headlines.unshift(headline);
         if (world.current.briefing.headlines.length > 6) {
@@ -82,7 +91,9 @@ export async function POST(req: Request) {
         console.log(`Diplomacy: Generated Headline: "${headline}"`);
     }
 
-    const dataToUpdate: any = { lastPlayerSnapshot: snapshot as unknown as object };
+    const dataToUpdate: { lastPlayerSnapshot: object; worldState?: object } = {
+      lastPlayerSnapshot: snapshot as unknown as object,
+    };
     if (worldUpdated) {
         dataToUpdate.worldState = world as unknown as object;
     }

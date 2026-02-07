@@ -1,8 +1,15 @@
 import { prisma } from "./client";
-import { buildCountryProfile, PlayerActionSchema, type GameSnapshot, type PlayerAction, type TurnOutcome, type WorldState } from "@/engine";
+import {
+  buildCountryProfile,
+  PlayerActionSchema,
+  type GameSnapshot,
+  type IncomingEvent,
+  type PlayerAction,
+  type TurnOutcome,
+  type WorldState,
+} from "@/engine";
 import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/engine";
 import {
-  llmGenerateControlRoomView,
   llmGenerateCountryProfile,
   llmGenerateDiplomacy,
   llmGenerateResolution,
@@ -12,6 +19,93 @@ import {
   llmParsePlayerDirective,
 } from "./llm";
 import { ensureDbSchema } from "./ensureDb";
+
+declare global {
+  // In-flight de-dupe for snapshot hydration (LLM turn-start + dossier).
+  var __twuoSnapshotHydrateInflight: Map<string, Promise<void>> | undefined;
+}
+
+async function hydrateSnapshotWithLlmIfNeeded(args: {
+  gameId: string;
+  world: WorldState;
+  snapshot: GameSnapshot;
+}): Promise<void> {
+  if (llmMode() !== "ON") return;
+
+  const { gameId, world, snapshot } = args;
+  const needsTurnStart =
+    world.turnStartGenerator === "llm" &&
+    (!world.current?.briefing?.text || world.current.briefing.text.trim().length < 10 || world.current.incomingEvents.length === 0);
+  const needsDossier = snapshot.countryProfile?.generatedBy !== "llm";
+  const needsDiplomacy = !snapshot.diplomacy || !Array.isArray(snapshot.diplomacy.nations) || snapshot.diplomacy.nations.length === 0;
+  if (!needsTurnStart && !needsDossier && !needsDiplomacy) return;
+
+  const inflight = (globalThis.__twuoSnapshotHydrateInflight ??= new Map<string, Promise<void>>());
+  const key = `${gameId}:${world.turn}:hydrate`;
+  const existing = inflight.get(key);
+  if (existing) {
+    await existing;
+    return;
+  }
+
+  const run = (async () => {
+    const [pkgRes, dossierRes, dipRes] = await Promise.allSettled([
+      needsTurnStart ? llmGenerateTurnPackage({ world, phase: world.turn === 1 ? "TURN_1" : "TURN_N" }) : Promise.resolve(null),
+      needsDossier
+        ? llmGenerateCountryProfile({
+            world,
+            indicators: {
+              economicStability: snapshot.playerView.indicators.economicStability,
+              legitimacy: snapshot.playerView.indicators.legitimacy,
+              unrestLevel: snapshot.playerView.indicators.unrestLevel,
+              intelligenceClarity: snapshot.playerView.indicators.intelligenceClarity,
+            },
+          })
+        : Promise.resolve(null),
+      needsDiplomacy ? llmGenerateDiplomacy({ world }) : Promise.resolve(null),
+    ]);
+
+    if (pkgRes.status === "fulfilled" && pkgRes.value) {
+      world.current.briefing = pkgRes.value.briefing;
+      world.current.incomingEvents = pkgRes.value.events;
+      snapshot.playerView.briefing = pkgRes.value.briefing;
+      snapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
+        id: e.id,
+        type: e.type,
+        actor: e.actor,
+        urgency: e.urgency,
+        visibleDescription: e.visibleDescription,
+        playerChoicesHints: e.playerChoicesHints,
+      }));
+    }
+
+    if (dossierRes.status === "fulfilled" && dossierRes.value) {
+      snapshot.countryProfile = dossierRes.value.countryProfile;
+    }
+
+    if (dipRes.status === "fulfilled" && dipRes.value && typeof dipRes.value === "object" && "nations" in dipRes.value) {
+      snapshot.diplomacy = { nations: (dipRes.value as { nations: GameSnapshot["diplomacy"]["nations"] }).nations };
+    }
+
+    // Persist only if we actually improved anything.
+    if (
+      (pkgRes.status === "fulfilled" && pkgRes.value) ||
+      (dossierRes.status === "fulfilled" && dossierRes.value) ||
+      (dipRes.status === "fulfilled" && dipRes.value)
+    ) {
+      await prisma.game.update({
+        where: { id: gameId },
+        data: {
+          worldState: world as unknown as object,
+          lastPlayerSnapshot: snapshot as unknown as object,
+        },
+      });
+    }
+  })().finally(() => inflight.delete(key));
+
+  inflight.set(key, run);
+  await run;
+}
 
 function extractAfterSnapshot(playerSnapshot: unknown): GameSnapshot | null {
   if (!playerSnapshot || typeof playerSnapshot !== "object") return null;
@@ -145,6 +239,8 @@ function fallbackActionsFromDirective(args: {
   const wantConquest = /\bconquer\b|\boccupy\b|\btake over\b|\bseize\b|\bannex\b|\binvade\b/.test(d);
   const wantMobilize = /\bmobiliz(e|ation)\b|\btroops\b|\bdeploy\b|\bposture\b/.test(d);
   const wantIntel = /\bintel\b|\bspy\b|\bsurveillance\b|\bcounterintel\b|\bcovert\b/.test(d);
+  const wantKidnap = /\b(kidnap|abduct|snatch|rendition|hostage)\b/.test(d);
+  const wantExtort = /\b(extort|ransom|blackmail)\b/.test(d);
   const wantNarrative = /\bpropaganda\b|\bnarrative\b|\bmedia\b|\bcensor\b/.test(d);
   const wantReform = /\banti-corruption\b|\breform\b|\bpurge\b|\belection\b/.test(d);
 
@@ -221,6 +317,17 @@ function fallbackActionsFromDirective(args: {
     });
     rationale.push("Translate intelligence intent into surveillance to reduce deception risk.");
   }
+  if ((wantKidnap || wantExtort) && actions.length < args.remainingSlots) {
+    actions.push({
+      kind: "INTEL",
+      subkind: "COVERT_OP",
+      intensity: Math.max(2, intensity) as 1 | 2 | 3,
+      isPublic: false,
+      targetActor: targetActorId,
+      targetRegion: targetRegion ?? "leadership circle",
+    });
+    rationale.push("Translate abduction/extortion intent into a covert operation (illegal/unethical actions are modeled as covert ops).");
+  }
   if (wantNarrative && actions.length < args.remainingSlots) {
     actions.push({ kind: "MEDIA", subkind: "NARRATIVE_FRAMING", intensity: Math.max(1, intensity - 0) as 1 | 2 | 3, isPublic: true });
     rationale.push("Translate narrative intent into disciplined framing.");
@@ -244,42 +351,6 @@ function fallbackActionsFromDirective(args: {
   }
 
   return { actions: actions.slice(0, args.remainingSlots), rationale };
-}
-
-async function attachControlRoomView(gameId: string, world: WorldState, snapshot: GameSnapshot): Promise<void> {
-  if (llmMode() !== "ON") return;
-  try {
-    const recent = await prisma.turnLog.findMany({
-      where: { gameId },
-      orderBy: { turnNumber: "desc" },
-      take: 3,
-    });
-
-    const memory = recent
-      .map((r) => {
-        const snapAfter = extractAfterSnapshot(r.playerSnapshot);
-        const artifacts = (r.llmArtifacts as unknown as Record<string, unknown> | null) ?? null;
-        const resolution = artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] : null;
-        const resolutionHeadline =
-          resolution &&
-          typeof resolution === "object" &&
-          "headline" in resolution &&
-          typeof (resolution as Record<string, unknown>).headline === "string"
-            ? String((resolution as Record<string, unknown>).headline)
-            : undefined;
-        return {
-          turn: r.turnNumber,
-          resolutionHeadline,
-          controlRoom: snapAfter?.playerView?.controlRoom ?? null,
-        };
-      })
-      .reverse();
-
-    const out = await llmGenerateControlRoomView({ snapshot, world, memory });
-    snapshot.playerView.controlRoom = out.data as unknown as GameSnapshot["playerView"]["controlRoom"];
-  } catch {
-    // Ignore: UI will fall back to deterministic derivations.
-  }
 }
 
 function newSeed(): string {
@@ -328,7 +399,7 @@ function fastMode(): boolean {
 export async function createGame(seed?: string): Promise<GameSnapshot> {
   await ensureDbSchema();
   const s = seed?.trim() ? seed.trim() : newSeed();
-  const world = createNewGameWorld(s);
+  const world = createNewGameWorld(s, { turnStartGenerator: llmMode() === "ON" ? "llm" : "engine" });
 
   // Optional LLM worldgen: remove hard-coded starting templates by patching the initial world’s
   // player identity + neighbors + regional powers based on a random global location.
@@ -348,18 +419,9 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
     }
   }
 
-  // Optional LLM generation for Turn 1 briefing/events (replaces deterministic turn-start content).
-  let llmArtifact: unknown | undefined;
-  if (!fastMode() && llmMode() === "ON") {
-    try {
-      const pkg = await llmGenerateTurnPackage({ world, phase: "TURN_1" });
-      world.current.briefing = pkg.briefing;
-      world.current.incomingEvents = pkg.events;
-      llmArtifact = pkg.llmRaw;
-    } catch {
-      // Fail closed: proceed deterministically without LLM.
-    }
-  }
+  // IMPORTANT: Do not block new-game creation on LLM calls.
+  // When AI is ON, we create the game immediately with empty turn-start content.
+  // The snapshot endpoint will fill turn-start briefing/events (and optionally dossier) on first load.
 
   const game = await prisma.game.create({
     data: {
@@ -374,60 +436,22 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
 
   const snapshot = getPlayerSnapshot(game.id, world, "ACTIVE");
 
-  // Optional LLM-generated dossier (player-facing country profile). Fail closed to deterministic profile.
-  if (!fastMode() && llmMode() === "ON") {
-    try {
-      const ind = snapshot.playerView.indicators;
-      const dossier = await llmGenerateCountryProfile({
-        world,
-        indicators: {
-          economicStability: ind.economicStability,
-          legitimacy: ind.legitimacy,
-          unrestLevel: ind.unrestLevel,
-          intelligenceClarity: ind.intelligenceClarity,
-        },
-      });
-      snapshot.countryProfile = dossier.countryProfile;
-      llmArtifact = llmArtifact ? { ...(llmArtifact as object), countryProfile: dossier.llmRaw } : { countryProfile: dossier.llmRaw };
-    } catch {
-      // Ignore: keep deterministic dossier.
-    }
-  }
+  // Note: dossier generation is also deferred to snapshot load in LLM mode to keep createGame fast.
 
-  // Generate Diplomacy (Deterministic or LLM)
-  try {
-    const dip = await llmGenerateDiplomacy({ world });
-    snapshot.diplomacy = { nations: dip.nations };
-  } catch (e) {
-    console.error("Diplomacy Gen Failed", e);
-  }
-
-  // Optional LLM-generated control-room view model for this turn.
-  if (!fastMode()) {
-    await attachControlRoomView(game.id, world, snapshot);
-  }
+  // Note: we intentionally do not generate an extra control-room view here.
+  // The UI derives its feed/signals from `snapshot.playerView.*`, and we want to keep turn start fast.
 
   await prisma.game.update({
     where: { id: game.id },
     data: { lastPlayerSnapshot: snapshot as unknown as object },
   });
 
-  if (llmArtifact) {
-    await prisma.turnLog.create({
-      data: {
-        gameId: game.id,
-        turnNumber: 0,
-        briefingText: world.current.briefing.text,
-        incomingEvents: world.current.incomingEvents as unknown as object,
-        playerActions: [] as unknown as object,
-        publicResolution: "INIT",
-        publicConsequences: [] as unknown as object,
-        signalsUnknown: [] as unknown as object,
-        playerSnapshot: { before: snapshot, after: snapshot } as unknown as object,
-        worldState: { before: world, after: world } as unknown as object,
-        failure: undefined,
-      },
-    });
+  // Note: no init turnLog artifact is created here; it will be created during real turns.
+
+  // Start LLM hydration immediately (fire-and-forget) so it overlaps with the landing page
+  // and /game navigation. Snapshot endpoint also hydrates (deduped), so this is best-effort.
+  if (llmMode() === "ON") {
+    void hydrateSnapshotWithLlmIfNeeded({ gameId: game.id, world, snapshot }).catch(() => {});
   }
 
   return snapshot;
@@ -450,38 +474,14 @@ export async function getLatestSnapshot(): Promise<GameSnapshot | null> {
     });
   }
 
-  // Backfill control-room view (LLM-first) so UI uses LLM for Pressure/Hotspots/Signals/Feed immediately.
-  if (!fastMode() && llmMode() === "ON" && !snap.playerView.controlRoom) {
-    const world = game.worldState as unknown as WorldState;
-    await attachControlRoomView(game.id, world, snap);
-    await prisma.game.update({
-      where: { id: game.id },
-      data: { lastPlayerSnapshot: snap as unknown as object },
-    });
-  }
-
-  // Backfill diplomacy if missing
-  if (!snap.diplomacy) {
-    const world = game.worldState as unknown as WorldState;
-    try {
-      const dip = await llmGenerateDiplomacy({ world });
-      snap.diplomacy = { nations: dip.nations };
-      await prisma.game.update({
-        where: { id: game.id },
-        data: { lastPlayerSnapshot: snap as unknown as object },
-      });
-    } catch (e) {
-      console.error("Diplomacy Backfill Failed", e);
-    }
-  }
-
+  // Note: control-room view is optional; we do not backfill it with extra LLM calls here.
   return snap;
 }
 
 export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
   const game = await prisma.game.findUnique({ where: { id: gameId } });
   if (!game) throw new Error("Game not found");
-  const snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
+  let snapshot = game.lastPlayerSnapshot as unknown as GameSnapshot;
   snapshot.llmMode = llmMode();
 
   // Backfill older snapshots (pre-dossier upgrade) so UI never crashes.
@@ -500,30 +500,22 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
     });
   }
 
-  // Backfill diplomacy if missing
-  if (!snapshot.diplomacy) {
+  // LLM-first hydration on read:
+  // If AI is ON and the game was created with LLM-driven turn-start content, fill it
+  // once (with in-flight de-dupe) when the client first loads the game.
+  if (snapshot.llmMode === "ON") {
     const world = game.worldState as unknown as WorldState;
-    try {
-      const dip = await llmGenerateDiplomacy({ world });
-      snapshot.diplomacy = { nations: dip.nations };
-      await prisma.game.update({
-        where: { id: gameId },
-        data: { lastPlayerSnapshot: snapshot as unknown as object },
-      });
-    } catch (e) {
-      console.error("Diplomacy Backfill Failed", e);
+    await hydrateSnapshotWithLlmIfNeeded({ gameId, world, snapshot });
+    // Re-read the snapshot after hydration so callers always get the persisted shape.
+    const refreshed = await prisma.game.findUnique({ where: { id: gameId } });
+    if (refreshed) {
+      snapshot = refreshed.lastPlayerSnapshot as unknown as GameSnapshot;
+      snapshot.llmMode = llmMode();
     }
   }
 
-  // Backfill control-room view (LLM-first) so existing games render from LLM without requiring a new turn.
-  if (!fastMode() && snapshot.llmMode === "ON" && !snapshot.playerView.controlRoom) {
-    const world = game.worldState as unknown as WorldState;
-    await attachControlRoomView(gameId, world, snapshot);
-    await prisma.game.update({
-      where: { id: gameId },
-      data: { lastPlayerSnapshot: snapshot as unknown as object },
-    });
-  }
+  // Note: control-room view is optional; the current UI derives its feed/signals deterministically
+  // from `snapshot.playerView.*`, so we avoid generating extra LLM calls on read.
 
   return snapshot;
 }
@@ -545,6 +537,9 @@ export async function submitTurn(
   if (game.status === "FAILED") throw new Error("Game already ended");
 
   const world = game.worldState as unknown as WorldState;
+  // Ensure the engine does not generate deterministic turn-start content when AI is ON.
+  // This prevents `engine/events.ts` content from ever leaking into player-visible UI in LLM mode.
+  world.turnStartGenerator = llmMode() === "ON" ? "llm" : "engine";
   // The engine mutates `world` in place. Capture an immutable before-state for logging and resolution diffs.
   const worldBefore = structuredClone(world) as WorldState;
   const snapshotBefore = getPlayerSnapshot(gameId, worldBefore, "ACTIVE");
@@ -617,41 +612,11 @@ export async function submitTurn(
 
   const { world: nextWorld, outcome } = submitTurnAndAdvance(gameId, world, actions);
 
-  // Preserve diplomacy state from previous turn, or generate if missing.
+  // Preserve diplomacy state across turns (so `DiplomacyPanel` keeps working).
   const lastSnap = game.lastPlayerSnapshot as unknown as GameSnapshot;
-  if (lastSnap && lastSnap.diplomacy) {
+  if (lastSnap?.diplomacy) {
     outcome.nextSnapshot.diplomacy = lastSnap.diplomacy;
-    // TODO: Ideally we would update stances here based on the turn outcome.
-  } else {
-     try {
-       const dip = await llmGenerateDiplomacy({ world: nextWorld });
-       outcome.nextSnapshot.diplomacy = { nations: dip.nations };
-     } catch (e) {
-       console.error("Diplomacy Gen Failed in submitTurn", e);
-     }
   }
-
-  // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
-  let llmArtifact: unknown | undefined;
-  if (!fastMode() && !outcome.failure && llmMode() === "ON") {
-    try {
-      const pkg = await llmGenerateTurnPackage({
-        world: nextWorld,
-        phase: "TURN_N",
-        playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
-        lastTurnPublicResolution: outcome.publicResolutionText,
-      });
-      nextWorld.current.briefing = pkg.briefing;
-      nextWorld.current.incomingEvents = pkg.events;
-      llmArtifact = pkg.llmRaw;
-    } catch {
-      // Proceed without LLM changes.
-    }
-  }
-
-  // Keep artifacts available for future DB logging without tripping eslint unused checks.
-  void directiveArtifact;
-  void llmArtifact;
 
   // Fill failure timeline from the last 3 turns (if applicable).
   const failure = outcome.failure
@@ -660,34 +625,135 @@ export async function submitTurn(
 
   const finalOutcome: TurnOutcome = failure ? { ...outcome, failure } : outcome;
 
-  // Optional LLM-generated dossier refresh for the *next* snapshot.
-  if (!fastMode() && llmMode() === "ON") {
-    try {
-      const ind = finalOutcome.nextSnapshot.playerView.indicators;
-      const dossier = await llmGenerateCountryProfile({
-        world: nextWorld,
-        indicators: {
-          economicStability: ind.economicStability,
-          legitimacy: ind.legitimacy,
-          unrestLevel: ind.unrestLevel,
-          intelligenceClarity: ind.intelligenceClarity,
-        },
-      });
-      finalOutcome.nextSnapshot.countryProfile = dossier.countryProfile;
-      llmArtifact = llmArtifact ? { ...(llmArtifact as object), countryProfile: dossier.llmRaw } : { countryProfile: dossier.llmRaw };
-    } catch {
-      // Ignore: keep deterministic dossier.
-    }
-  }
-
-  // Optional LLM-generated control-room view model for the *next* snapshot.
-  if (!fastMode()) {
-    await attachControlRoomView(gameId, nextWorld, finalOutcome.nextSnapshot);
-  }
-
   // Stamp runtime AI mode into the returned snapshot so the client can correctly
   // decide whether to auto-enhance resolution, show AI indicators, etc.
   finalOutcome.nextSnapshot.llmMode = llmMode();
+
+  // LLM work: run concurrently so end-turn feels faster.
+  // - next turn briefing/events (turn package)
+  // - current turn resolution narrative (cached into turnLog so the modal is instant)
+  const llmOn = llmMode() === "ON";
+  let nextTurnPkg: { briefing: WorldState["current"]["briefing"]; events: IncomingEvent[]; llmRaw: unknown } | null = null;
+  let resolutionArtifact: { data: unknown; raw: unknown } | null = null;
+
+  const recentPromise = llmOn
+    ? prisma.turnLog.findMany({
+        where: { gameId },
+        orderBy: { turnNumber: "desc" },
+        take: 3,
+      })
+    : Promise.resolve([]);
+
+  const pkgPromise =
+    llmOn && !finalOutcome.failure
+      ? recentPromise.then((recent) =>
+          llmGenerateTurnPackage({
+            world: nextWorld,
+            phase: "TURN_N",
+            playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
+            lastTurnPublicResolution: outcome.publicResolutionText,
+            memory: recent
+              .map((r) => ({ turn: r.turnNumber, directive: r.playerDirective ?? null, publicResolution: r.publicResolution ?? null }))
+              .reverse(),
+          }),
+        )
+      : null;
+
+  const resolutionPromise =
+    llmOn
+      ? (async () => {
+          const metric = (label: string, before: number, after: number) => {
+            const b = Math.round(before);
+            const a = Math.round(after);
+            return { label, before: b, after: a, delta: a - b };
+          };
+          const deltas = [
+            metric("Legitimacy", worldBefore.player.politics.legitimacy, nextWorld.player.politics.legitimacy),
+            metric("Elite cohesion", worldBefore.player.politics.eliteCohesion, nextWorld.player.politics.eliteCohesion),
+            metric("Military loyalty", worldBefore.player.politics.militaryLoyalty, nextWorld.player.politics.militaryLoyalty),
+            metric("Unrest", worldBefore.player.politics.unrest, nextWorld.player.politics.unrest),
+            metric("Sovereignty integrity", worldBefore.player.politics.sovereigntyIntegrity, nextWorld.player.politics.sovereigntyIntegrity),
+            metric("Global credibility", worldBefore.player.politics.credibilityGlobal, nextWorld.player.politics.credibilityGlobal),
+            metric("Economic stability", worldBefore.player.economy.economicStability, nextWorld.player.economy.economicStability),
+            metric("Inflation pressure", worldBefore.player.economy.inflationPressure, nextWorld.player.economy.inflationPressure),
+            metric("Debt stress", worldBefore.player.economy.debtStress, nextWorld.player.economy.debtStress),
+            metric("Military readiness", worldBefore.player.military.readiness, nextWorld.player.military.readiness),
+          ];
+
+          const actorIds = Object.keys(nextWorld.actors) as Array<keyof typeof nextWorld.actors>;
+          const actorShifts = actorIds
+            .map((id) => {
+              const b = worldBefore.actors[id];
+              const a = nextWorld.actors[id];
+              return {
+                actor: a.name,
+                posture: a.postureTowardPlayer,
+                trustDelta: a.trust - b.trust,
+                escalationDelta: a.willingnessToEscalate - b.willingnessToEscalate,
+              };
+            })
+            .sort((x, y) => Math.abs(y.trustDelta) + Math.abs(y.escalationDelta) - (Math.abs(x.trustDelta) + Math.abs(x.escalationDelta)))
+            .slice(0, 6);
+
+          const threats = actorIds
+            .map((id) => nextWorld.actors[id])
+            .map((a) => ({
+              name: a.name,
+              score:
+                (a.postureTowardPlayer === "hostile" ? 50 : a.postureTowardPlayer === "neutral" ? 20 : 0) +
+                (100 - a.trust) * 0.35 +
+                a.willingnessToEscalate * 0.35 +
+                a.domesticPressure * 0.2,
+            }))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 4)
+            .map((t) => `Pressure vector: ${t.name}`);
+
+          const translatedActions = actions.map((a) => {
+            const subkind = (a as unknown as { subkind?: unknown }).subkind;
+            const kind = typeof subkind === "string" && subkind.trim() ? subkind.trim() : a.kind;
+            return { kind, summary: summarizeAction(a) };
+          });
+
+          const llm = await llmGenerateResolution({
+            turnNumber: outcome.turnResolved,
+            directive: playerDirective?.trim() ? playerDirective.trim() : undefined,
+            translatedActions,
+            deltas,
+            actorShifts,
+            threats,
+            worldBefore,
+            worldAfter: nextWorld,
+          });
+          return llm;
+        })()
+      : null;
+
+  const [pkgRes, resolutionRes] = await Promise.allSettled([
+    pkgPromise ?? Promise.resolve(null),
+    resolutionPromise ?? Promise.resolve(null),
+  ]);
+
+  if (pkgRes.status === "fulfilled" && pkgRes.value) {
+    nextWorld.current.briefing = pkgRes.value.briefing;
+    nextWorld.current.incomingEvents = pkgRes.value.events;
+    nextTurnPkg = { briefing: pkgRes.value.briefing, events: pkgRes.value.events, llmRaw: pkgRes.value.llmRaw };
+
+    // Ensure the returned snapshot reflects the LLM turn package.
+    finalOutcome.nextSnapshot.playerView.briefing = pkgRes.value.briefing;
+    finalOutcome.nextSnapshot.playerView.incomingEvents = pkgRes.value.events.map((e) => ({
+      id: e.id,
+      type: e.type,
+      actor: e.actor,
+      urgency: e.urgency,
+      visibleDescription: e.visibleDescription,
+      playerChoicesHints: e.playerChoicesHints,
+    }));
+  }
+
+  if (resolutionRes.status === "fulfilled" && resolutionRes.value) {
+    resolutionArtifact = { data: resolutionRes.value.data, raw: resolutionRes.value.llmRaw };
+  }
 
   // Capture after-state for logging. Must be cloned because `nextWorld` continues to be mutated (LLM turn package, etc.)
   const worldAfter = structuredClone(nextWorld) as WorldState;
@@ -709,10 +775,12 @@ export async function submitTurn(
         worldState: { before: worldBefore, after: worldAfter } as unknown as object,
         failure: finalOutcome.failure ? (finalOutcome.failure as unknown as object) : undefined,
         llmArtifacts:
-          directiveArtifact || llmArtifact
+          directiveArtifact || nextTurnPkg?.llmRaw || resolutionArtifact
             ? ({
                 directiveParse: directiveArtifact ?? null,
-                nextTurnPackage: llmArtifact ?? null,
+                nextTurnPackage: nextTurnPkg?.llmRaw ?? null,
+                resolution: resolutionArtifact?.data ?? null,
+                resolutionRaw: resolutionArtifact?.raw ?? null,
               } as unknown as object)
             : undefined,
       },
@@ -1025,7 +1093,9 @@ export async function getResolutionReport(
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
   // Only reuse cached LLM artifacts if they actually contain a usable narrative.
   // Old/partial cached shapes can have a headline but no narrative, which makes the UI look blank.
-  if (!opts?.forceLlm && existing && typeof existing === "object") {
+  // If we already have a valid cached LLM narrative, return it even when `forceLlm=1`.
+  // `forceLlm` means "ensure AI is present", not "regenerate every time".
+  if (existing && typeof existing === "object") {
     const n = (existing as Record<string, unknown>)["narrative"];
     const lines = Array.isArray(n) ? n.filter((x) => typeof x === "string").map((s) => String(s).trim()).filter(Boolean) : [];
     const hasTimeline =
@@ -1045,9 +1115,8 @@ export async function getResolutionReport(
     }
   }
 
-  // Fast mode: don't block the resolution API on LLM generation unless explicitly forced.
-  // The UI can render from deterministic `publicResolution` + deltas immediately.
-  if (fastMode() && !opts?.forceLlm) return base;
+  // Always generate LLM resolution when AI is ON (unless a cached valid one exists).
+  // We do not use fast-mode deterministic fallbacks for resolution narrative.
 
   try {
     const llm = await llmGenerateResolution({
