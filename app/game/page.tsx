@@ -99,7 +99,7 @@ export default function GameControlRoomPage() {
           snapshot={snap}
           bottomSlot={
             // Reserve space so the sticky prompt console doesn't cover content.
-            <div className="h-[26vh]" />
+            <div style={{ height: "var(--prompt-console-h, 22vh)" }} />
           }
         />
       </Shell>

@@ -1,14 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Send, ChevronLeft, ChevronRight, Dice5 } from "lucide-react";
 import { motion } from "framer-motion";
 import type { GameSnapshot } from "@/engine";
-import { apiTimeline } from "@/components/api";
-
-type TimelinePayload = {
-  items: Array<{ turnNumber: number; directive: string | null; headline: string; bullets: string[]; incoming: string[] }>;
-};
 
 export function PromptConsole({
   gameId,
@@ -35,9 +30,13 @@ export function PromptConsole({
 }) {
   const [directive, setDirective] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [timeline, setTimeline] = useState<TimelinePayload | null>(null);
-  const [timelineErr, setTimelineErr] = useState<string | null>(null);
-  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [heightVh, setHeightVh] = useState<number>(() => {
+    if (typeof window === "undefined") return 22;
+    const raw = window.localStorage.getItem("twuo:commandDeckHeightVh");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) ? Math.max(16, Math.min(60, n)) : 22;
+  });
+  const dragRef = useRef<{ startY: number; startVh: number; dragging: boolean } | null>(null);
 
   const placeholder = useMemo(
     () =>
@@ -45,24 +44,15 @@ export function PromptConsole({
     [],
   );
 
-  async function refreshTimeline() {
-    setTimelineLoading(true);
-    setTimelineErr(null);
-    try {
-      const data = (await apiTimeline(gameId, { limit: 8 })) as TimelinePayload;
-      setTimeline(data);
-    } catch (e) {
-      setTimelineErr((e as Error).message);
-      setTimeline(null);
-    } finally {
-      setTimelineLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void refreshTimeline();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameId, turnLabel]);
+    // Keep page layout in sync with resizable height.
+    if (typeof document !== "undefined") {
+      document.documentElement.style.setProperty("--prompt-console-h", `${heightVh}vh`);
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("twuo:commandDeckHeightVh", String(heightVh));
+    }
+  }, [heightVh]);
 
   async function submit() {
     if (!directive.trim() || submitting || disabled) return;
@@ -75,13 +65,11 @@ export function PromptConsole({
     }
   }
 
-  const timelineTop = timeline?.items?.[0] ?? null;
-
   const autoFillOptions = useMemo(() => {
     const c = snapshot.countryProfile.name;
     const n1 = snapshot.countryProfile.neighbors?.[0] ?? "a neighbor";
     const n2 = snapshot.countryProfile.neighbors?.[1] ?? "another neighbor";
-    const h = String(timelineTop?.headline || snapshot.playerView.briefing.headlines?.[0] || "")
+    const h = String(snapshot.playerView.briefing.headlines?.[0] || "")
       .replace(/\s+/g, " ")
       .slice(0, 80);
     return [
@@ -91,7 +79,7 @@ export function PromptConsole({
       `Secure emergency shipments; deploy crowd-control to the capital; open a hotline with ${n2}.`,
       `Propose a 7-day stand-down corridor; demand trade-route guarantees; prep retaliation plan.`,
     ];
-  }, [snapshot.countryProfile.name, snapshot.countryProfile.neighbors, snapshot.playerView.briefing.headlines, timelineTop?.headline]);
+  }, [snapshot.countryProfile.name, snapshot.countryProfile.neighbors, snapshot.playerView.briefing.headlines]);
 
   function autofill() {
     const pick = autoFillOptions[Math.floor(Math.random() * autoFillOptions.length)] ?? "";
@@ -99,8 +87,48 @@ export function PromptConsole({
     setDirective(pick);
   }
 
+  function onResizePointerDown(e: React.PointerEvent) {
+    // Left-click / primary touch only.
+    if (typeof (e as unknown as { button?: number }).button === "number" && (e as unknown as { button: number }).button !== 0) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    dragRef.current = { startY, startVh: heightVh, dragging: true };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const prevUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: PointerEvent) => {
+      if (!dragRef.current?.dragging) return;
+      const dy = ev.clientY - dragRef.current.startY;
+      const deltaVh = (-dy / window.innerHeight) * 100;
+      const next = Math.max(16, Math.min(60, dragRef.current.startVh + deltaVh));
+      setHeightVh(Number(next.toFixed(2)));
+    };
+    const onUp = () => {
+      if (dragRef.current) dragRef.current.dragging = false;
+      document.body.style.userSelect = prevUserSelect;
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
   return (
-    <div className="prompt-console fixed inset-x-0 bottom-0 z-[60] h-[24vh] border-t border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/90 backdrop-blur overflow-hidden">
+    <div
+      className="prompt-console fixed inset-x-0 bottom-0 z-[60] border-t border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)]/90 backdrop-blur overflow-hidden"
+      style={{ height: `${heightVh}vh` }}
+    >
+      <div
+        role="separator"
+        aria-label="Resize command deck"
+        onPointerDown={onResizePointerDown}
+        className="absolute top-0 inset-x-0 h-3 cursor-ns-resize"
+      >
+        <div className="mx-auto mt-1.5 h-1 w-12 rounded-full bg-[var(--ds-gray-alpha-300)]" />
+      </div>
       {submitting ? (
         <motion.div
           className="fixed inset-0 z-[90] bg-black/70 backdrop-blur-sm flex items-center justify-center"
@@ -137,7 +165,7 @@ export function PromptConsole({
           </div>
         </motion.div>
       ) : null}
-      <div className="mx-auto h-full w-full max-w-[1800px] px-4 md:px-6 py-3 flex flex-col">
+      <div className="mx-auto h-full w-full max-w-[1800px] px-4 md:px-6 pt-5 pb-3 flex flex-col">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -171,48 +199,6 @@ export function PromptConsole({
         </div>
 
         <div className="mt-3 flex flex-col gap-3 flex-1 min-h-0">
-          <details className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] px-3 py-2">
-            <summary className="cursor-pointer select-none">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Timeline</div>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    void refreshTimeline();
-                  }}
-                  disabled={timelineLoading}
-                  className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-800)] disabled:opacity-50"
-                >
-                  {timelineLoading ? "Refreshing…" : "Refresh"}
-                </button>
-              </div>
-            </summary>
-            {timelineErr ? <div className="mt-2 text-xs font-mono text-[var(--ds-red-700)]">Timeline error: {timelineErr}</div> : null}
-            {!timeline ? (
-              <div className="mt-2 text-xs font-mono text-[var(--ds-gray-700)]">
-                {timelineLoading ? "Loading timeline…" : "No timeline available yet."}
-              </div>
-            ) : (
-              <ul className="mt-2 space-y-2 max-h-[10vh] overflow-y-auto pr-1">
-                {timeline.items.map((it) => (
-                  <li
-                    key={`${it.turnNumber}-${it.headline}`}
-                    className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] p-2"
-                  >
-                    <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Turn {it.turnNumber}</div>
-                    <div className="mt-1 text-[11px] font-mono text-[var(--ds-gray-1000)]">{it.headline}</div>
-                    {it.directive ? (
-                      <div className="mt-1 text-[11px] font-mono text-[var(--ds-gray-800)]">
-                        <span className="opacity-60">Directive:</span> {it.directive}
-                      </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </details>
-
           <div className="rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-gray-alpha-100)] p-3 flex flex-col min-h-0 flex-1">
             <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)]">Directive</div>
             <textarea
