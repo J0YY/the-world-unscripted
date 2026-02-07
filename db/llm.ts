@@ -1,12 +1,13 @@
 import type { ActorId, CountryProfile, ExternalActorState, ForeignPower, GameSnapshot, IncomingEvent, PlayerAction, WorldState } from "@/engine";
 import { PlayerActionSchema } from "@/engine";
-import type { z } from "zod";
+import { z } from "zod";
 import {
   LlmControlRoomViewSchema,
   LlmCountryProfileSchema,
+  LlmGenerateBriefingOnlySchema,
+  LlmGenerateEventsOnlySchema,
   LlmDiplomacySchema,
   LlmDiplomacyChatResponseSchema,
-  LlmGenerateTurnPackageSchema,
   LlmParseDirectiveSchema,
   LlmResolutionSchema,
   LlmRewriteTurnSchema,
@@ -272,11 +273,10 @@ export async function llmGenerateTurnPackage(args: {
   lastTurnPublicResolution?: string;
   memory?: Array<{ turn: number; directive?: string | null; publicResolution?: string | null }>;
 }): Promise<{ briefing: WorldState["current"]["briefing"]; events: IncomingEvent[]; llmRaw: unknown }> {
-  const system = [
+  const baseSystem = [
     "You are the turn generator for a grounded geopolitical simulation.",
     "Tone: unsentimental, Reuters/cabinet memo style, operational language.",
     "Output MUST be strict JSON object only.",
-    "You must generate: briefing + 2-5 incoming events.",
     "NON-NEGOTIABLE SPECIFICITY:",
     "- Every item in briefing.headlines, briefing.domesticRumors, briefing.diplomaticMessages, and briefing.intelBriefs[].text MUST mention at least one specific proper noun from the provided context: the player country name, a named neighbor, or a named external actor.",
     "- At least 2 items must mention a neighbor by name.",
@@ -293,7 +293,7 @@ export async function llmGenerateTurnPackage(args: {
 
   const context = summarizeWorldForLlm(args.world);
   const memory = Array.isArray(args.memory) ? args.memory.slice(-3) : [];
-  const user = [
+  const userContext = [
     `PHASE: ${args.phase}`,
     args.playerDirective ? `PLAYER_DIRECTIVE: ${args.playerDirective}` : "PLAYER_DIRECTIVE: (none)",
     args.lastTurnPublicResolution ? `LAST_TURN_PUBLIC_RESOLUTION:\n${args.lastTurnPublicResolution}` : "",
@@ -302,31 +302,6 @@ export async function llmGenerateTurnPackage(args: {
     "CONTEXT (qualitative only; do not invent numeric scores):",
     JSON.stringify(context, null, 2),
     "",
-    "Return JSON matching this shape:",
-    JSON.stringify(
-      {
-        briefing: {
-          text: "string",
-          headlines: ["string"],
-          domesticRumors: ["string"],
-          diplomaticMessages: ["string"],
-          intelBriefs: [{ text: "string", confidence: "low|med|high" }],
-        },
-        events: [
-          {
-            type: "SANCTIONS_WARNING",
-            actor: "US|EU|CHINA|RUSSIA|REGIONAL_1|REGIONAL_2|DOMESTIC|UNKNOWN",
-            urgency: 1,
-            visibleDescription: "string",
-            playerChoicesHints: ["string"],
-            effects: [{ kind: "DELTA", key: "player.politics.legitimacy", amount: -2, reason: "string", visibility: "hidden" }],
-            scheduled: [{ kind: "SANCTIONS_BITE", dueInTurns: 2, payload: {} }],
-          },
-        ],
-      },
-      null,
-      2,
-    ),
   ].join("\n");
 
   const names = [
@@ -344,11 +319,9 @@ export async function llmGenerateTurnPackage(args: {
     return names.some((n) => n.length >= 3 && t.includes(n.toLowerCase()));
   };
 
-  const validateTurnPkg = (obj: unknown) => {
-    const parsed = LlmGenerateTurnPackageSchema.parse(obj);
-    // Safety: fail closed if model leaks obvious numeric truth patterns into player-visible text.
+  const validateBriefing = (obj: unknown) => {
+    const parsed = LlmGenerateBriefingOnlySchema.parse(obj);
     if (leaksNumbers(parsed.briefing.text)) throw new Error("LLM briefing leaked numeric scoring; disabled for this turn");
-
     const allLines: string[] = [
       ...parsed.briefing.headlines,
       ...parsed.briefing.domesticRumors,
@@ -372,30 +345,145 @@ export async function llmGenerateTurnPackage(args: {
     return parsed;
   };
 
-  let lastErr: unknown = null;
+  const validateEvents = (obj: unknown) => {
+    const parsed = LlmGenerateEventsOnlySchema.parse(obj);
+    return parsed;
+  };
+
+  type BriefingOnly = z.infer<typeof LlmGenerateBriefingOnlySchema>;
+  type EventsOnly = z.infer<typeof LlmGenerateEventsOnlySchema>;
+
   const temps = [0.85, 0.6, 0.5, 0.4];
+  let briefing: BriefingOnly["briefing"] | null = null;
+  let eventsData: EventsOnly["events"] | null = null;
+  let lastBriefErr: unknown = null;
+  let lastEventsErr: unknown = null;
+  const llmRawParts: Record<string, unknown> = {};
+
   for (let attempt = 0; attempt < temps.length; attempt++) {
     try {
-      const extra =
+      const briefingExtra =
         attempt === 0
           ? ""
           : [
               "",
-              "REPAIR MODE:",
-              "Your previous output was rejected for being too generic.",
+              "REPAIR MODE (BRIEFING):",
+              "Your previous output was rejected for being too generic or invalid.",
               "Regenerate the ENTIRE JSON, keeping the same schema, but ensure every line contains specific names from context.",
-              lastErr ? `Validation error: ${String((lastErr as Error)?.message ?? lastErr)}` : "",
+              lastBriefErr ? `Validation error: ${String((lastBriefErr as Error)?.message ?? lastBriefErr)}` : "",
             ].join("\n");
-      const { data, raw } = await chatJson({
-        system: system + extra,
-        user,
-        schemaName: attempt === 0 ? "LlmGenerateTurnPackageSchema" : `LlmGenerateTurnPackageSchema_retry_${attempt}`,
-        validate: validateTurnPkg,
-        temperature: temps[attempt] ?? 0.5,
-      });
+      const briefingSystem =
+        baseSystem +
+        "\n\n" +
+        [
+          "TASK: Generate briefing only.",
+          "Ignore any instructions about events/effects; do NOT output events.",
+          "OUTPUT: Return JSON with key 'briefing' ONLY (no events).",
+        ].join("\n");
+      const briefingUser = [
+        userContext,
+        "Return JSON matching this shape:",
+        JSON.stringify(
+          {
+            briefing: {
+              text: "string",
+              headlines: ["string"],
+              domesticRumors: ["string"],
+              diplomaticMessages: ["string"],
+              intelBriefs: [{ text: "string", confidence: "low|med|high" }],
+            },
+          },
+          null,
+          2,
+        ),
+      ].join("\n");
+
+      const eventsExtra =
+        attempt === 0
+          ? ""
+          : [
+              "",
+              "REPAIR MODE (EVENTS):",
+              "Your previous output was rejected for being invalid or implausible.",
+              "Regenerate the ENTIRE JSON, keeping the same schema.",
+              lastEventsErr ? `Validation error: ${String((lastEventsErr as Error)?.message ?? lastEventsErr)}` : "",
+            ].join("\n");
+      const eventsSystem =
+        baseSystem +
+        "\n\n" +
+        [
+          "TASK: Generate 2-5 incoming events only.",
+          "Ignore any instructions about briefing fields; do NOT output briefing.",
+          "OUTPUT: Return JSON with key 'events' ONLY (no briefing).",
+        ].join("\n");
+      const eventsUser = [
+        userContext,
+        "Return JSON matching this shape:",
+        JSON.stringify(
+          {
+            events: [
+              {
+                type: "SANCTIONS_WARNING",
+                actor: "US|EU|CHINA|RUSSIA|REGIONAL_1|REGIONAL_2|DOMESTIC|UNKNOWN",
+                urgency: 1,
+                visibleDescription: "string",
+                playerChoicesHints: ["string"],
+                effects: [{ kind: "DELTA", key: "player.politics.legitimacy", amount: -2, reason: "string", visibility: "hidden" }],
+                scheduled: [{ kind: "SANCTIONS_BITE", dueInTurns: 2, payload: {} }],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      ].join("\n");
+
+      type ChatRes<T> = { data: T; raw: unknown };
+      const settled = (await Promise.allSettled([
+        briefing
+          ? Promise.resolve(null)
+          : chatJson<BriefingOnly>({
+              system: briefingSystem + briefingExtra,
+              user: briefingUser,
+              schemaName: attempt === 0 ? "LlmGenerateBriefingOnlySchema" : `LlmGenerateBriefingOnlySchema_retry_${attempt}`,
+              validate: validateBriefing,
+              temperature: temps[attempt] ?? 0.5,
+            }),
+        eventsData
+          ? Promise.resolve(null)
+          : chatJson<EventsOnly>({
+              system: eventsSystem + eventsExtra,
+              user: eventsUser,
+              schemaName: attempt === 0 ? "LlmGenerateEventsOnlySchema" : `LlmGenerateEventsOnlySchema_retry_${attempt}`,
+              validate: validateEvents,
+              temperature: temps[attempt] ?? 0.5,
+            }),
+      ])) as [
+        PromiseSettledResult<null | ChatRes<BriefingOnly>>,
+        PromiseSettledResult<null | ChatRes<EventsOnly>>,
+      ];
+
+      const briefRes = settled[0];
+      const eventsRes = settled[1];
+
+      if (briefRes.status === "fulfilled" && briefRes.value) {
+        briefing = briefRes.value.data.briefing;
+        llmRawParts.briefingRaw = briefRes.value.raw;
+      } else if (briefRes.status === "rejected") {
+        lastBriefErr = briefRes.reason;
+      }
+
+      if (eventsRes.status === "fulfilled" && eventsRes.value) {
+        eventsData = eventsRes.value.data.events;
+        llmRawParts.eventsRaw = eventsRes.value.raw;
+      } else if (eventsRes.status === "rejected") {
+        lastEventsErr = eventsRes.reason;
+      }
+
+      if (!briefing || !eventsData) continue;
 
       const turn = args.world.turn;
-      const events: IncomingEvent[] = data.events.map((e, idx) => ({
+      const events: IncomingEvent[] = eventsData.map((e, idx) => ({
         id: `T${turn}-E${idx}-LLM-${e.type}`,
         type: e.type as IncomingEvent["type"],
         actor: e.actor as IncomingEvent["actor"],
@@ -413,12 +501,14 @@ export async function llmGenerateTurnPackage(args: {
         },
       }));
 
-      return { briefing: data.briefing, events, llmRaw: raw };
+      return { briefing, events, llmRaw: llmRawParts };
     } catch (e) {
-      lastErr = e;
+      // If something unexpected happened outside validation, keep trying.
+      lastEventsErr = lastEventsErr ?? e;
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error("LLM turn package failed");
+  const err = lastBriefErr ?? lastEventsErr ?? new Error("LLM turn package failed");
+  throw err instanceof Error ? err : new Error(String(err));
 
 }
 

@@ -101,46 +101,58 @@ const IncomingEventTypeSchema = z.preprocess((v) => {
   "INSURGENT_ATTACK",
 ]));
 
-export const LlmGenerateTurnPackageSchema = z.object({
-  briefing: z.object({
-    text: z.string().min(60).max(8000),
-    headlines: z.array(z.string().min(10).max(220)).min(3).max(7),
-    domesticRumors: z.array(z.string().min(10).max(220)).min(1).max(5),
-    diplomaticMessages: z.array(z.string().min(10).max(260)).min(1).max(5),
-    intelBriefs: z
-      .array(
-        z.object({
-          text: z.string().min(10).max(380),
-          confidence: z.enum(["low", "med", "high"]),
-        }),
-      )
-      .min(1)
-      .max(4),
-  }),
-  // Full event list for the turn.
-  events: z
+const LlmBriefingSchema = z.object({
+  text: z.string().min(60).max(8000),
+  headlines: z.array(z.string().min(10).max(220)).min(3).max(7),
+  domesticRumors: z.array(z.string().min(10).max(220)).min(1).max(5),
+  diplomaticMessages: z.array(z.string().min(10).max(260)).min(1).max(5),
+  intelBriefs: z
     .array(
       z.object({
-        type: IncomingEventTypeSchema,
-        actor: z.enum(["US", "CHINA", "RUSSIA", "EU", "REGIONAL_1", "REGIONAL_2", "DOMESTIC", "UNKNOWN"]),
-        urgency: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-        visibleDescription: z.string().min(20).max(700),
-        playerChoicesHints: z.array(z.string().min(6).max(160)).min(0).max(6).optional(),
-        effects: z.array(EffectOpLiteSchema).min(1).max(8),
-        scheduled: z
-          .array(
-            z.object({
-              kind: ScheduledKindSchema,
-              dueInTurns: z.number().int().min(1).max(3),
-              payload: z.unknown().optional(),
-            }),
-          )
-          .max(4)
-          .optional(),
+        text: z.string().min(10).max(380),
+        confidence: z.enum(["low", "med", "high"]),
       }),
     )
-    .min(2)
-    .max(5),
+    .min(1)
+    .max(4),
+});
+
+const LlmEventsSchema = z
+  .array(
+    z.object({
+      type: IncomingEventTypeSchema,
+      actor: z.enum(["US", "CHINA", "RUSSIA", "EU", "REGIONAL_1", "REGIONAL_2", "DOMESTIC", "UNKNOWN"]),
+      urgency: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+      visibleDescription: z.string().min(20).max(700),
+      playerChoicesHints: z.array(z.string().min(6).max(160)).min(0).max(6).optional(),
+      effects: z.array(EffectOpLiteSchema).min(1).max(8),
+      scheduled: z
+        .array(
+          z.object({
+            kind: ScheduledKindSchema,
+            dueInTurns: z.number().int().min(1).max(3),
+            payload: z.unknown().optional(),
+          }),
+        )
+        .max(4)
+        .optional(),
+    }),
+  )
+  .min(2)
+  .max(5);
+
+export const LlmGenerateTurnPackageSchema = z.object({
+  briefing: LlmBriefingSchema,
+  events: LlmEventsSchema,
+});
+
+// For parallel generation: briefing and events can be produced independently.
+export const LlmGenerateBriefingOnlySchema = z.object({
+  briefing: LlmBriefingSchema,
+});
+
+export const LlmGenerateEventsOnlySchema = z.object({
+  events: LlmEventsSchema,
 });
 
 export const LlmRewriteTurnSchema = z.object({
