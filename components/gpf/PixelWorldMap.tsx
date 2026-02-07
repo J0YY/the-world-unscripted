@@ -6,38 +6,90 @@ import { mapModeConfig, type MapMode, type CountryColorMap, type UiBriefingItem 
 
 type DottedMapData = Record<string, Array<{ lon: number; lat: number; cityDistanceRank: number }>>;
 
-const modeColors: Record<MapMode, { high: string; med: string; low: string }> = {
-  pressure: { high: "#dc2626", med: "#f97316", low: "#3b82f6" },
-  relationship: { high: "#dc2626", med: "#eab308", low: "#22c55e" },
-  "world-events": { high: "#ffffff", med: "#ffffff", low: "#ffffff" },
+// Color gradient configurations for each mode
+const modeGradients: Record<MapMode, { low: string; mid: string; high: string }> = {
+  pressure: { low: "#3b82f6", mid: "#f97316", high: "#dc2626" }, // blue -> orange -> red
+  relationship: { low: "#22c55e", mid: "#eab308", high: "#dc2626" }, // green -> yellow -> red
+  "world-events": { low: "#ffffff", mid: "#ffffff", high: "#ffffff" }, // white -> white -> white
+};
+
+// Interpolate color between three points using intensity (0-1)
+const interpolateColor = (intensity: number, low: string, mid: string, high: string): string => {
+  // Clamp intensity between 0 and 1
+  const normalized = Math.max(0, Math.min(1, intensity));
+  
+  // Choose which gradient to use
+  const [color1, color2] = normalized < 0.5 
+    ? [low, mid] 
+    : [mid, high];
+  
+  // Calculate position within the chosen gradient
+  const t = normalized < 0.5 ? normalized * 2 : (normalized - 0.5) * 2;
+  
+  return lerpColor(color1, color2, t);
+};
+
+// Linear interpolation between two hex colors
+const lerpColor = (color1: string, color2: string, t: number): string => {
+  const hex1 = color1.replace("#", "");
+  const hex2 = color2.replace("#", "");
+  
+  const r1 = parseInt(hex1.substring(0, 2), 16);
+  const g1 = parseInt(hex1.substring(2, 4), 16);
+  const b1 = parseInt(hex1.substring(4, 6), 16);
+  
+  const r2 = parseInt(hex2.substring(0, 2), 16);
+  const g2 = parseInt(hex2.substring(2, 4), 16);
+  const b2 = parseInt(hex2.substring(4, 6), 16);
+  
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+  
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+};
+
+// Map discrete intensity to continuous value for gradient
+const intensityToContinuous = (intensity: "high" | "med" | "low" | "uncolored"): number => {
+  const map = { uncolored: -1, low: 0.25, med: 0.5, high: 1 };
+  return map[intensity] ?? -1;
 };
 
 const ColoredPixel = memo(
-  ({ x, y, color, onClick }: { x: number; y: number; color: string; onClick?: () => void }) => (
-    <g onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }} pointerEvents={onClick ? 'all' : 'none'}>
-      {/* Larger invisible rect for easier clicking */}
-      {onClick && (
+  ({ x, y, color, onMouseEnter, onMouseLeave, isHovered }: { x: number; y: number; color: string; onMouseEnter?: () => void; onMouseLeave?: () => void; isHovered?: boolean }) => {
+    // When hovered, use bright white; otherwise use the country's color
+    const displayColor = isHovered ? "#ffffff" : color;
+    
+    return (
+      <g onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} style={{ cursor: onMouseEnter ? 'pointer' : 'default' }} pointerEvents={onMouseEnter ? 'all' : 'none'}>
+        {/* Larger invisible rect for easier hovering */}
+        {onMouseEnter && (
+          <rect 
+            x={x - 3} 
+            y={y - 3} 
+            width={15} 
+            height={15}
+            fill="transparent"
+            pointerEvents="all"
+          />
+        )}
+        
+        {/* Core pixel with conditional styling */}
         <rect 
-          x={x - 1} 
-          y={y - 1} 
-          width={6} 
-          height={6} 
-          fill="transparent"
-          pointerEvents="all"
+          x={x} 
+          y={y} 
+          width={2.5} 
+          height={2.5} 
+          fill={displayColor} 
+          opacity={isHovered ? 1 : 0.95}
+          pointerEvents="none"
+          style={{
+            filter: isHovered ? 'drop-shadow(0 0 4px #ffffff) drop-shadow(0 0 8px #ffffff) drop-shadow(0 0 12px #ffffff)' : `drop-shadow(0 0 1px ${displayColor})`
+          }}
         />
-      )}
-      {/* Visible pixel */}
-      <rect 
-        x={x} 
-        y={y} 
-        width={2.5} 
-        height={2.5} 
-        fill={color} 
-        opacity={0.9}
-        pointerEvents="none"
-      />
-    </g>
-  )
+      </g>
+    );
+  }
 );
 ColoredPixel.displayName = "ColoredPixel";
 
@@ -66,13 +118,15 @@ export default function PixelWorldMap({
 }: PixelWorldMapProps) {
   const [dottedMapData, setDottedMapData] = useState<DottedMapData | null>(null);
   const [dottedMapErr, setDottedMapErr] = useState<string | null>(null);
-  const [selectedCountry, setSelectedCountry] = useState<string | null>(null);
+  const [hoveredCountry, setHoveredCountry] = useState<string | null>(null);
+  const [panelHovered, setPanelHovered] = useState(false);
+  const [hoveredCountryX, setHoveredCountryX] = useState<number | null>(null);
 
   const projection = useMemo(
     () =>
       geoMercator()
         .scale(140)
-        .center([15, 25])
+        .center([5, 25])
         .rotate([0, 0, 0])
         .translate([width / 2, height / 2]),
     [width, height],
@@ -95,37 +149,60 @@ export default function PixelWorldMap({
     };
   }, []);
 
-  // Build map of country code to color
+  // Build map of country code to color - now using gradient interpolation
   const countryColorMap = useMemo(() => {
-    const map = new Map<string, { color: string; intensity: "high" | "med" | "low" | "uncolored" }>();
+    const map = new Map<string, { color: string; intensity: "high" | "med" | "low" | "uncolored"; continuousIntensity: number }>();
+    const gradients = modeGradients[mode];
+    
     countryColors.forEach((cc) => {
-      map.set(cc.countryCode, { color: cc.color || "#999999", intensity: cc.intensity });
+      const continuousIntensity = intensityToContinuous(cc.intensity);
+      const color = continuousIntensity < 0 
+        ? "#999999" 
+        : interpolateColor(continuousIntensity, gradients.low, gradients.mid, gradients.high);
+      
+      map.set(cc.countryCode, { color, intensity: cc.intensity, continuousIntensity });
     });
     return map;
-  }, [countryColors]);
+  }, [countryColors, mode]);
 
   // special marker inserted by adapters when player's country is fictional
   // (countryCode === "__PLAYER__"). Contains lat/lon of inferred location.
   const playerLocation = useMemo(() => countryColors.find((c) => c.countryCode === "__PLAYER__"), [countryColors]);
 
-  // Filter briefings that mention the selected country
-  const filteredBriefings = useMemo(() => {
-    if (!selectedCountry || !countryCodeToNames) return [];
+  // Pre-index briefings by country for O(1) lookup on hover
+  const briefingsByCountry = useMemo(() => {
+    const map = new Map<string, Set<string>>();
     
-    const possibleNames = countryCodeToNames.get(selectedCountry);
-    if (!possibleNames) return [];
+    if (!countryCodeToNames || briefings.length === 0) return map;
     
-    return briefings.filter((briefing) => {
-      const content = briefing.content.toLowerCase();
-      // Check if any of the country's possible names appear in the briefing
-      for (const name of possibleNames) {
-        if (content.includes(name)) {
-          return true;
+    briefings.forEach((briefing) => {
+      const lowerContent = briefing.content.toLowerCase();
+      
+      countryCodeToNames.forEach((possibleNames, countryCode) => {
+        for (const name of possibleNames) {
+          if (lowerContent.includes(name)) {
+            if (!map.has(countryCode)) {
+              map.set(countryCode, new Set());
+            }
+            map.get(countryCode)!.add(briefing.id);
+            break; // Found a match for this country, move to next briefing
+          }
         }
-      }
-      return false;
+      });
     });
-  }, [selectedCountry, briefings, countryCodeToNames]);
+    
+    return map;
+  }, [briefings, countryCodeToNames]);
+
+  // Fast lookup of briefings for hovered country using pre-indexed map
+  const filteredBriefings = useMemo(() => {
+    if (!hoveredCountry) return [];
+    
+    const briefingIds = briefingsByCountry.get(hoveredCountry);
+    if (!briefingIds || briefingIds.size === 0) return [];
+    
+    return briefings.filter((b) => briefingIds.has(b.id));
+  }, [hoveredCountry, briefingsByCountry, briefings]);
 
   const pixels = useMemo(() => {
     const result: Array<{
@@ -189,8 +266,22 @@ export default function PixelWorldMap({
     return result;
   }, [dottedMapData, projection, width, height, countryColorMap, mode, playerLocation]);
 
+  // Debounced hover handlers to prevent flickering when moving between pixels
+  const handlePixelEnter = (countryCode: string, x: number) => {
+    setHoveredCountry(countryCode);
+    setHoveredCountryX(x);
+  };
+
+  const handlePixelLeave = () => {
+    // Only clear hover if panel is not hovered
+    if (!panelHovered) {
+      setHoveredCountry(null);
+      setHoveredCountryX(null);
+    }
+  };
+
   const config = mapModeConfig[mode];
-  const colors = modeColors[mode];
+  const gradients = modeGradients[mode];
 
   return (
     <div className="relative w-full">
@@ -208,7 +299,9 @@ export default function PixelWorldMap({
                   x={p.x} 
                   y={p.y} 
                   color={p.color}
-                  onClick={mode === "world-events" ? () => setSelectedCountry(p.countryCode) : undefined}
+                  isHovered={hoveredCountry === p.countryCode}
+                  onMouseEnter={mode === "world-events" ? () => handlePixelEnter(p.countryCode, p.x) : undefined}
+                  onMouseLeave={mode === "world-events" ? handlePixelLeave : undefined}
                 />
               ) : (
                 <UncoloredPixel key={p.key} x={p.x} y={p.y} />
@@ -217,45 +310,44 @@ export default function PixelWorldMap({
         </g>
       </svg>
 
-      <div className="absolute bottom-2 left-2 p-2 bg-[var(--ds-background-100)]/80 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded text-[10px] font-mono">
-        <div className="text-[var(--ds-gray-900)] uppercase mb-1.5">{config.legendLabel}</div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.high }} />
-            <span className="text-[var(--ds-gray-900)]">High</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.med }} />
-            <span className="text-[var(--ds-gray-900)]">Med</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: colors.low }} />
-            <span className="text-[var(--ds-gray-900)]">Low</span>
+      {/* Legend - hidden in world-events mode */}
+      {mode !== "world-events" && (
+        <div className="absolute bottom-2 left-2 p-2 bg-[var(--ds-background-100)]/80 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded text-[10px] font-mono">
+          <div className="text-[var(--ds-gray-900)] uppercase mb-1.5">{config.legendLabel}</div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.high }} />
+              <span className="text-[var(--ds-gray-900)]">High</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.mid }} />
+              <span className="text-[var(--ds-gray-900)]">Med</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.low }} />
+              <span className="text-[var(--ds-gray-900)]">Low</span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Briefings Panel - only in world-events mode */}
-      {mode === "world-events" && selectedCountry && (
+      {mode === "world-events" && (hoveredCountry || panelHovered) && (
         <div 
-          className="absolute top-4 right-4 z-50 w-96 max-w-[calc(100%-2rem)] p-4 bg-[var(--ds-background-100)]/95 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded-lg shadow-xl"
+          className="absolute top-4 z-50 w-96 max-w-[calc(100%-2rem)] p-4 bg-[var(--ds-background-100)]/95 border border-[var(--ds-gray-alpha-400)] rounded-lg shadow-xl"
           style={{
             maxHeight: '500px',
-            overflowY: 'auto'
+            overflowY: 'auto',
+            [hoveredCountryX !== null && hoveredCountryX > width / 2 ? 'left' : 'right']: '1rem'
           }}
+          onMouseEnter={() => setPanelHovered(true)}
+          onMouseLeave={() => setPanelHovered(false)}
         >
-          <button
-            onClick={() => setSelectedCountry(null)}
-            className="absolute top-2 right-2 p-1 rounded hover:bg-[var(--ds-gray-alpha-200)] transition-colors"
-            aria-label="Close"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="4" y1="4" x2="12" y2="12" />
-              <line x1="12" y1="4" x2="4" y2="12" />
-            </svg>
-          </button>
-          <div className="text-[11px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)] mb-3 pr-6">
-            Related Briefings {filteredBriefings.length > 0 && `(${filteredBriefings.length})`}
+          <div className="text-[11px] font-mono uppercase tracking-wider text-[var(--ds-gray-600)] mb-3">
+            {hoveredCountry && countryCodeToNames?.get(hoveredCountry) 
+              ? Array.from(countryCodeToNames.get(hoveredCountry) || [])[0] 
+              : 'Briefings'}
+            {filteredBriefings.length > 0 && ` (${filteredBriefings.length})`}
           </div>
           {filteredBriefings.length > 0 ? (
             <>
