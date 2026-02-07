@@ -15,42 +15,56 @@ export default function TourButton() {
           element: "header h1",
           popover: {
             title: "Control Room",
-            description: "Welcome to your command center. From here, you monitor global stability and direct your nation's covert response.",
+            description: "Your command center. Monitor global stability, review your country dossier (via the 'i' icon), and direct covert operations.",
           },
         },
         {
           element: "#gpf-pressure",
           popover: {
             title: "Global Pressure Index",
-            description: "This gauge tracks the aggregate stress on the international system. If it spikes too high, the system enters a chaotic cascade state.",
+            description: "The aggregate stress on the international system. If this spikes too high, the world enters a chaotic cascade state.",
+          },
+        },
+        {
+          element: "#gpf-turn-deltas",
+          popover: {
+            title: "Turn Shifts",
+            description: "Track exactly how your last decision impacted global metrics and stability scores turn-over-turn.",
+          },
+        },
+        {
+          element: "#gpf-intel",
+          popover: {
+            title: "Intel & Diplomacy",
+            description: "Toggle between the **Intel Assistant** (for deep analysis) and **Diplomatic Channels** (to chat directly with foreign leaders).",
           },
         },
         {
           element: "#gpf-hotspots",
           popover: {
             title: "Active Hotspots",
-            description: "Geopolitical flashpoints requiring decision. These drive the narrative and contribute to global pressure.",
+            description: "Geopolitical flashpoints. Resolving these drives the narrative. Ignore them at your peril.",
           },
         },
         {
           element: "#gpf-map",
           popover: {
-            title: "World Map Projection",
-            description: "A visualization of pressure intensity and intelligence coverage. Toggle layers to see different data dimensions.",
+            title: "Perception Map",
+            description: "Visualizes pressure intensity and intel coverage. Use the toggles to filter layers (e.g. Political Fog vs. Raw Pressure).",
           },
         },
         {
           element: "#gpf-feed",
           popover: {
-            title: "Intelligence Feed",
-            description: "Inbound cables and news tickers. This provides context for the quantitative data on the map.",
+            title: "The Wire",
+            description: "Real-time headlines and intelligence cables. Watch this for the public reaction to your private moves.",
           },
         },
         {
           element: ".prompt-console",
           popover: {
             title: "Command Deck",
-            description: "Prompt-first interface. Type a directive; the system translates it into operations (when AI is online).",
+            description: "Type your orders here in natural language. 'Stabilize the border', 'Bribe the general', or 'Leak the documents'.",
           },
         },
       ],
@@ -65,12 +79,12 @@ export default function TourButton() {
   }, []);
 
   useEffect(() => {
-    const hasSeenTour = localStorage.getItem("world-unscripted-tour-seen-v1");
+    const hasSeenTour = localStorage.getItem("world-unscripted-tour-seen-v2");
     if (!hasSeenTour) {
       // Wait for the game fade-in (approx 2.6s) to finish before starting tour
       const timer = setTimeout(() => {
         startTour();
-        localStorage.setItem("world-unscripted-tour-seen-v1", "true");
+        localStorage.setItem("world-unscripted-tour-seen-v2", "true");
       }, 3000);
       return () => clearTimeout(timer);
     }
