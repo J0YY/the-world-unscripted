@@ -130,7 +130,7 @@ function DecryptionMinigame({
 
           // Start timer on first valid key press if not already running
           if (seqIndex === 0 && !seqTimerRef.current) {
-               const timePerKey = 450 - (signal.intensity * 150); 
+               const timePerKey = 350 - (signal.intensity * 150); 
                const totalTime = sequence.length * timePerKey;
                seqTimerRef.current = setTimeout(() => {
                    handleFail();
