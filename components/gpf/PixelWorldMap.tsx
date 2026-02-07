@@ -126,7 +126,7 @@ export default function PixelWorldMap({
     () =>
       geoMercator()
         .scale(140)
-        .center([15, 25])
+        .center([5, 25])
         .rotate([0, 0, 0])
         .translate([width / 2, height / 2]),
     [width, height],
@@ -310,23 +310,26 @@ export default function PixelWorldMap({
         </g>
       </svg>
 
-      <div className="absolute bottom-2 left-2 p-2 bg-[var(--ds-background-100)]/80 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded text-[10px] font-mono">
-        <div className="text-[var(--ds-gray-900)] uppercase mb-1.5">{config.legendLabel}</div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.high }} />
-            <span className="text-[var(--ds-gray-900)]">High</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.mid }} />
-            <span className="text-[var(--ds-gray-900)]">Med</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.low }} />
-            <span className="text-[var(--ds-gray-900)]">Low</span>
+      {/* Legend - hidden in world-events mode */}
+      {mode !== "world-events" && (
+        <div className="absolute bottom-2 left-2 p-2 bg-[var(--ds-background-100)]/80 backdrop-blur-sm border border-[var(--ds-gray-alpha-400)] rounded text-[10px] font-mono">
+          <div className="text-[var(--ds-gray-900)] uppercase mb-1.5">{config.legendLabel}</div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.high }} />
+              <span className="text-[var(--ds-gray-900)]">High</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.mid }} />
+              <span className="text-[var(--ds-gray-900)]">Med</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: gradients.low }} />
+              <span className="text-[var(--ds-gray-900)]">Low</span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Briefings Panel - only in world-events mode */}
       {mode === "world-events" && (hoveredCountry || panelHovered) && (
