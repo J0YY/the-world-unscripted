@@ -9,6 +9,7 @@ interface LayerToggleProps {
   onIntelFogChange: (value: boolean) => void;
   showExposure: boolean;
   onShowExposureChange: (value: boolean) => void;
+  locationLabel?: string;
 }
 
 export default function LayerToggle({
@@ -18,8 +19,9 @@ export default function LayerToggle({
   onIntelFogChange,
   showExposure,
   onShowExposureChange,
+  locationLabel,
 }: LayerToggleProps) {
-  const modes: MapMode[] = ["relationship", "world-events"];
+  const modes: MapMode[] = ["location", "relationship", "world-events"];
 
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
@@ -35,7 +37,7 @@ export default function LayerToggle({
             }`}
             type="button"
           >
-            {mapModeConfig[m].label}
+            {m === "location" ? locationLabel ?? mapModeConfig[m].label : mapModeConfig[m].label}
           </button>
         ))}
       </div>

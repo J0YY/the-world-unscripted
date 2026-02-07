@@ -32,12 +32,12 @@ export default function GlobalPressureFieldPage({
   rightSlot?: React.ReactNode;
   bottomSlot?: React.ReactNode;
 }) {
-  const [mode, setMode] = useState<MapMode>("pressure");
+  const [mode, setMode] = useState<MapMode>("location");
   const [intelFog, setIntelFog] = useState(true);
   const [showExposure, setShowExposure] = useState(true);
   const [leftTab, setLeftTab] = useState<"intel" | "diplomacy">("intel");
 
-  const derivedMode = mode === "relationship" ? "relationship" : "world-events";
+  const derivedMode = mode === "world-events" ? "world-events" : "relationship";
   const derived = useMemo(() => deriveGpf(snapshot, derivedMode), [snapshot, derivedMode]);
 
   const powerIndex = useMemo(() => {
@@ -160,7 +160,9 @@ export default function GlobalPressureFieldPage({
             <TurnDeltasPanel snapshot={snapshot} />
           </div>
           <div id="gpf-hotspots">
-            {mode === "world-events" ? null : <HotspotList mode={mode} hotspots={derived.hotspots} />}
+            {mode === "world-events" || mode === "location" ? null : (
+              <HotspotList mode={mode} hotspots={derived.hotspots} />
+            )}
           </div>
           <div id="gpf-intel" className="flex flex-col gap-2">
             <div className="flex items-center gap-3 border-b border-[var(--ds-gray-alpha-200)] pb-1 mb-1">
@@ -194,6 +196,7 @@ export default function GlobalPressureFieldPage({
             onIntelFogChange={setIntelFog}
             showExposure={showExposure}
             onShowExposureChange={setShowExposure}
+            locationLabel={snapshot.countryProfile.name}
           />
           <div className="border border-[var(--ds-gray-alpha-200)] rounded overflow-hidden">
             <PixelWorldMap
@@ -201,6 +204,7 @@ export default function GlobalPressureFieldPage({
               countryColors={derived.countryColors}
               briefings={derived.briefings}
               countryCodeToNames={derived.countryCodeToNames}
+              neighborNames={snapshot.countryProfile.neighbors}
             />
           </div>
           <SignalsStrip signals={derived.signals} turn={derived.turn} />
