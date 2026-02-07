@@ -39,7 +39,8 @@ export default function GlobalPressureFieldPage({
   const [deltaPerTurn, setDeltaPerTurn] = useState<number | null>(null);
   const [leftTab, setLeftTab] = useState<"intel" | "diplomacy">("intel");
 
-  const derived = useMemo(() => deriveGpf(snapshot, mode), [snapshot, mode]);
+  const derivedMode = mode === "relationship" ? "relationship" : "world-events";
+  const derived = useMemo(() => deriveGpf(snapshot, derivedMode), [snapshot, derivedMode]);
   const deltaPerTurnDisplay = snapshot.turn <= 1 ? null : deltaPerTurn;
 
   useEffect(() => {
@@ -143,8 +144,11 @@ export default function GlobalPressureFieldPage({
               systemStrain={derived.systemStrain}
             />
           </div>
+          <div id="gpf-turn-deltas">
+            <TurnDeltasPanel snapshot={snapshot} />
+          </div>
           <div id="gpf-hotspots">
-            {mode === "world-events" ? <TurnDeltasPanel snapshot={snapshot} /> : <HotspotList mode={mode} hotspots={derived.hotspots} />}
+            {mode === "world-events" ? null : <HotspotList mode={mode} hotspots={derived.hotspots} />}
           </div>
           <div id="gpf-intel" className="flex flex-col gap-2">
             <div className="flex items-center gap-3 border-b border-[var(--ds-gray-alpha-200)] pb-1 mb-1">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { GameSnapshot, TurnOutcome } from "@/engine";
 import { apiResolutionReport, apiSnapshot, apiSubmitTurnWithDirective } from "@/components/api";
@@ -26,6 +26,30 @@ export default function GameControlRoomPage() {
   const [afterActionOpen, setAfterActionOpen] = useState(false);
   const [afterActionOutcome, setAfterActionOutcome] = useState<TurnOutcome | null>(null);
   const [afterActionDirective, setAfterActionDirective] = useState<string>("");
+  const hydrationPollTokenRef = useRef(0);
+
+  async function pollHydrationUntilReady(gameId: string) {
+    const token = ++hydrationPollTokenRef.current;
+    const maxMs = 45_000;
+    const startedAt = Date.now();
+    const delaysMs = [900, 1200, 1600, 2200, 3000, 4200, 6000, 8500, 10_000];
+
+    // Staggered poll: quick early checks, then back off hard.
+    for (let i = 0; Date.now() - startedAt < maxMs; i++) {
+      if (hydrationPollTokenRef.current !== token) return;
+
+      const delay = delaysMs[Math.min(i, delaysMs.length - 1)] ?? 2000;
+      const extraHiddenDelay = typeof document !== "undefined" && document.hidden ? 6000 : 0;
+      await new Promise((r) => setTimeout(r, delay + extraHiddenDelay));
+
+      if (hydrationPollTokenRef.current !== token) return;
+
+      const s = await apiSnapshot(gameId);
+      if (hydrationPollTokenRef.current !== token) return;
+      setSnap(s);
+      if (!needsHydration(s)) break;
+    }
+  }
 
   useEffect(() => {
     // Slow dramatic fade-in when entering the control room.
@@ -40,29 +64,22 @@ export default function GameControlRoomPage() {
       return;
     }
     let stopped = false;
-    const poll = async () => {
+    const load = async () => {
       try {
         const latest = await apiSnapshot(gameId);
         if (stopped) return;
         setSnap(latest);
         if (latest.status === "FAILED") router.push("/failure");
         if (!needsHydration(latest)) return;
-        // Poll until LLM hydration finishes (non-blocking server).
-        const start = Date.now();
-        while (!stopped && Date.now() - start < 45_000) {
-          await new Promise((r) => setTimeout(r, 1500));
-          const next = await apiSnapshot(gameId);
-          if (stopped) return;
-          setSnap(next);
-          if (!needsHydration(next)) break;
-        }
+        await pollHydrationUntilReady(gameId);
       } catch (e) {
         if (!stopped) setError((e as Error).message);
       }
     };
-    void poll();
+    void load();
     return () => {
       stopped = true;
+      hydrationPollTokenRef.current++;
     };
   }, [router]);
 
@@ -92,16 +109,8 @@ export default function GameControlRoomPage() {
       // - next snapshot hydration (Turn N+1 briefing/events)
       // This overlaps LLM latency with the time the user is reading the modal.
       void apiResolutionReport(gameId, outcome.turnResolved, { forceLlm: true }).catch(() => {});
-      // Poll snapshot briefly to pick up hydrated events/briefing.
-      void (async () => {
-        const start = Date.now();
-        while (Date.now() - start < 45_000) {
-          const s = await apiSnapshot(gameId);
-          setSnap(s);
-          if (!needsHydration(s)) break;
-          await new Promise((r) => setTimeout(r, 1500));
-        }
-      })().catch(() => {});
+      // Poll snapshot briefly to pick up hydrated events/briefing (non-blocking server).
+      if (needsHydration(next)) void pollHydrationUntilReady(gameId).catch(() => {});
     }
   }
 

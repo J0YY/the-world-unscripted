@@ -116,8 +116,8 @@ export default function AfterActionModal({
       }
     }
 
-    // If AI is expected but unavailable, surface that clearly.
-    if (llmMode !== "ON") lines.push("(AI offline: showing deterministic brief.)");
+    // If AI is explicitly OFF, surface that clearly.
+    if (llmMode === "OFF") lines.push("(AI offline: showing deterministic brief.)");
 
     const out = lines.map((s) => (typeof s === "string" ? s.trim() : "")).filter(Boolean).slice(0, 18);
     return out.length ? out : ["(Generating report…)"];

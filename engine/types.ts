@@ -439,6 +439,7 @@ export const IntelActionSchema = z.object({
   intensity: z.number().int().min(1).max(3),
   isPublic: z.boolean(),
   targetActor: z.enum(["US", "CHINA", "RUSSIA", "EU", "REGIONAL_1", "REGIONAL_2"]).optional(),
+  targetRegion: z.string().optional(),
 });
 
 export const MediaActionSchema = z.object({

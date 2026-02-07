@@ -28,6 +28,7 @@ export default function LandingPage() {
   const [snap, setSnap] = useState<GameSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isFadingToGame, setIsFadingToGame] = useState(false);
+  const hydrationPollTokenRef = useRef(0);
 
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState<LandingStep>("hero");
@@ -75,12 +76,19 @@ export default function LandingPage() {
       // Start snapshot hydration immediately (LLM briefing/events + dossier),
       // while the user is still on the landing page. Poll until filled.
       void (async () => {
-        const start = Date.now();
-        while (Date.now() - start < 45_000) {
+        const token = ++hydrationPollTokenRef.current;
+        const maxMs = 45_000;
+        const startedAt = Date.now();
+        const delaysMs = [900, 1200, 1600, 2200, 3000, 4200, 6000, 8500, 10_000];
+        for (let i = 0; Date.now() - startedAt < maxMs; i++) {
+          if (hydrationPollTokenRef.current !== token) return;
+          const delay = delaysMs[Math.min(i, delaysMs.length - 1)] ?? 2000;
+          const extraHiddenDelay = typeof document !== "undefined" && document.hidden ? 6000 : 0;
+          await new Promise((r) => setTimeout(r, delay + extraHiddenDelay));
+          if (hydrationPollTokenRef.current !== token) return;
           const s = await apiSnapshot(snap.gameId);
           setSnap(s);
           if (!needsHydration(s)) break;
-          await new Promise((r) => setTimeout(r, 1500));
         }
       })().catch(() => {});
       scrollToStep("dossier");
