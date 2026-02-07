@@ -24,6 +24,7 @@ const UncoloredPixel = memo(({ x, y }: { x: number; y: number }) => (
 ));
 UncoloredPixel.displayName = "UncoloredPixel";
 
+
 interface PixelWorldMapProps {
   width?: number;
   height?: number;
@@ -76,6 +77,10 @@ export default function PixelWorldMap({
     return map;
   }, [countryColors]);
 
+  // special marker inserted by adapters when player's country is fictional
+  // (countryCode === "__PLAYER__"). Contains lat/lon of inferred location.
+  const playerLocation = useMemo(() => countryColors.find((c) => c.countryCode === "__PLAYER__"), [countryColors]);
+
   const pixels = useMemo(() => {
     const result: Array<{
       key: string;
@@ -84,6 +89,8 @@ export default function PixelWorldMap({
       color: string;
       countryCode: string;
       isColored: boolean;
+      lon: number;
+      lat: number;
     }> = [];
 
     if (!dottedMapData) return result;
@@ -107,12 +114,34 @@ export default function PixelWorldMap({
           color,
           countryCode,
           isColored,
+          lon: city.lon,
+          lat: city.lat,
         });
       });
     });
 
+    // If mode is relationship and we have an inferred player location,
+    // highlight nearby pixels in pink so the player's fictional country
+    // is visible on the map. This overrides any other color for those pixels.
+    if (mode === "relationship" && playerLocation) {
+      const proj = projection([playerLocation.lon, playerLocation.lat]);
+      if (proj) {
+        const [px, py] = proj;
+        const radius = 20; // pixels
+        for (const p of result) {
+          const dx = p.x - px;
+          const dy = p.y - py;
+          if (dx * dx + dy * dy <= radius * radius) {
+            p.color = "#ff66b2";
+            p.isColored = true;
+            p.countryCode = "__PLAYER__";
+          }
+        }
+      }
+    }
+
     return result;
-  }, [dottedMapData, projection, width, height, countryColorMap]);
+  }, [dottedMapData, projection, width, height, countryColorMap, mode, playerLocation]);
 
   const config = mapModeConfig[mode];
   const colors = modeColors[mode];
@@ -126,13 +155,13 @@ export default function PixelWorldMap({
       ) : null}
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto bg-[var(--ds-background-100)]">
         <g>
-          {pixels.map((p) =>
-            p.isColored ? (
-              <ColoredPixel key={p.key} x={p.x} y={p.y} color={p.color} />
-            ) : (
-              <UncoloredPixel key={p.key} x={p.x} y={p.y} />
-            )
-          )}
+            {pixels.map((p) =>
+              p.isColored ? (
+                <ColoredPixel key={p.key} x={p.x} y={p.y} color={p.color} />
+              ) : (
+                <UncoloredPixel key={p.key} x={p.x} y={p.y} />
+              )
+            )}
         </g>
       </svg>
 
