@@ -15,7 +15,6 @@ type Busy = null | "new" | "load" | "reset";
 
 export default function LandingPage() {
   const router = useRouter();
-  const [seed, setSeed] = useState("");
   const [busy, setBusy] = useState<Busy>(null);
   const [snap, setSnap] = useState<GameSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +60,7 @@ export default function LandingPage() {
     setBusy("new");
     setError(null);
     try {
-      const snap = await apiCreateGame(seed || undefined);
+      const snap = await apiCreateGame();
       setStoredGameId(snap.gameId);
       setSnap(snap);
       scrollToStep("dossier");
@@ -95,7 +94,6 @@ export default function LandingPage() {
       await apiReset();
       clearStoredGame();
       setSnap(null);
-      setSeed("");
       setError(null);
       scrollToStep("hero");
     } finally {
@@ -150,14 +148,8 @@ export default function LandingPage() {
               <div className="border border-border/40 p-6 bg-card/60">
                 <div className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">Begin Simulation</div>
                 <p className="mt-4 font-mono text-xs text-muted-foreground leading-relaxed">
-                  Optional seed. Same seed → same world generation. Leave blank for a fresh run.
+                  Start a new run with a fresh world state.
                 </p>
-                <input
-                  value={seed}
-                  onChange={(e) => setSeed(e.target.value)}
-                  placeholder="seed (optional)"
-                  className="mt-4 w-full bg-background border border-border/50 px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/50 outline-none focus:border-accent"
-                />
                 <div className="mt-5 flex flex-wrap items-center gap-4">
                   <button
                     type="button"
@@ -319,6 +311,14 @@ export default function LandingPage() {
             )}
 
             <div className="mt-10 flex items-center gap-6">
+              <button
+                type="button"
+                onClick={() => scrollToStep("hero")}
+                className="group font-mono text-xs uppercase tracking-widest text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center gap-2"
+              >
+                <span className="transition-transform duration-300 group-hover:-translate-x-1">←</span>
+                <ScrambleTextOnHover text="Back" as="span" duration={0.4} />
+              </button>
               <button
                 type="button"
                 onClick={() => scrollToStep("mandate")}

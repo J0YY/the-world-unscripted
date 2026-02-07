@@ -5,6 +5,7 @@ import {
   llmGenerateControlRoomView,
   llmGenerateCountryProfile,
   llmGenerateResolution,
+  llmGenerateWorldGenScenario,
   llmGenerateTurnPackage,
   llmMode,
   llmParsePlayerDirective,
@@ -67,6 +68,36 @@ function pickPressureActor(world: WorldState) {
   return actorList[0]!;
 }
 
+function normalizePlaceLabel(s: string): string {
+  const cleaned = s
+    .replace(/["'’]/g, "")
+    .replace(/\b(the|a|an)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Title-case lightly for UI readability; keep acronyms as-is.
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((w) => (w.toUpperCase() === w ? w : w.slice(0, 1).toUpperCase() + w.slice(1)))
+    .join(" ");
+}
+
+function extractTargetRegionFromDirective(directive: string): string | null {
+  // Heuristic: capture the immediate named object after common coercive verbs.
+  // Examples:
+  // - "attack nigeria and conquer it" -> "Nigeria"
+  // - "invade turkey; take the capital" -> "Turkey"
+  const m =
+    directive.match(/\b(invade|attack|strike|bomb|conquer|occupy|seize|annex|take over)\s+([^.,;\n]+)$/i) ??
+    directive.match(/\b(invade|attack|strike|bomb|conquer|occupy|seize|annex|take over)\s+([^.,;\n]+?)(?:\band\b|\bthen\b|\bwith\b|,|;|\.|\n|$)/i);
+  if (!m) return null;
+  const raw = String(m[2] ?? "").trim();
+  if (!raw) return null;
+  // Avoid capturing pronouns.
+  if (/^(it|them|him|her|this|that)\b/i.test(raw)) return null;
+  return normalizePlaceLabel(raw);
+}
+
 function pickTargetActorFromDirective(directive: string, world: WorldState) {
   const d = directive.toLowerCase();
   // Try to match explicit actor names mentioned by the user (e.g., "turkey").
@@ -77,6 +108,12 @@ function pickTargetActorFromDirective(directive: string, world: WorldState) {
     if (tokens.some((t) => t.length >= 4 && d.includes(t))) return id;
     if (d.includes(name)) return id;
   }
+
+  // If the directive looks like a kinetic action against a place we don't model as an actor,
+  // don't default to a major power (US/CHINA/RUSSIA/EU). Use a generic regional actor instead.
+  const wantsKinetic = /\b(invade|attack|strike|bomb|conquer|occupy|seize|annex|war)\b/.test(d);
+  if (wantsKinetic && extractTargetRegionFromDirective(directive)) return "REGIONAL_1";
+
   return pickPressureActor(world).id;
 }
 
@@ -89,6 +126,7 @@ function fallbackActionsFromDirective(args: {
   const actions: PlayerAction[] = [];
   const rationale: string[] = [];
   const targetActorId = pickTargetActorFromDirective(args.directive, args.world);
+  const targetRegion = extractTargetRegionFromDirective(args.directive) ?? undefined;
 
   const isPublic = /\bpublic\b|\bannounce\b|\bon tv\b|\bpress\b/.test(d);
   const intensity = /\bfull\b|\bmaximum\b|\bmassive\b|\bcrush\b|\binvade\b/.test(d) ? 3 : /\blimited\b|\bquiet\b|\bcovert\b/.test(d) ? 1 : 2;
@@ -97,6 +135,7 @@ function fallbackActionsFromDirective(args: {
   const wantSubsidy = /\bsubsid(y|ies)\b|\bprice cap\b|\bfuel\b|\bfood\b/.test(d);
   const wantAusterity = /\bausterity\b|\bcut spending\b|\btighten\b/.test(d);
   const wantAttack = /\battack\b|\bstrike\b|\bbomb\b|\binvade\b|\bannex\b|\bwar\b/.test(d);
+  const wantConquest = /\bconquer\b|\boccupy\b|\btake over\b|\bseize\b|\bannex\b|\binvade\b/.test(d);
   const wantMobilize = /\bmobiliz(e|ation)\b|\btroops\b|\bdeploy\b|\bposture\b/.test(d);
   const wantIntel = /\bintel\b|\bspy\b|\bsurveillance\b|\bcounterintel\b|\bcovert\b/.test(d);
   const wantNarrative = /\bpropaganda\b|\bnarrative\b|\bmedia\b|\bcensor\b/.test(d);
@@ -117,13 +156,17 @@ function fallbackActionsFromDirective(args: {
   if ((wantAttack || wantMobilize) && actions.length < args.remainingSlots) {
     actions.push({
       kind: "MILITARY",
-      subkind: wantAttack ? "LIMITED_STRIKE" : "MOBILIZE",
-      intensity,
+      subkind: wantAttack ? (wantConquest ? "FULL_INVASION" : "LIMITED_STRIKE") : "MOBILIZE",
+      intensity: wantAttack && wantConquest ? (Math.max(intensity, 2) as 1 | 2 | 3) : intensity,
       isPublic,
       targetActor: targetActorId,
-      targetRegion: "border zone",
+      targetRegion: targetRegion ?? (wantAttack && wantConquest ? "capital corridor" : "border zone"),
     });
-    rationale.push("Translate coercive intent into a bounded military operation.");
+    rationale.push(
+      wantAttack && wantConquest
+        ? "Translate conquest intent into a full invasion (high-risk, high-cost)."
+        : "Translate coercive intent into a bounded military operation.",
+    );
   }
   if (wantIntel && actions.length < args.remainingSlots) {
     actions.push({
@@ -201,6 +244,36 @@ function newSeed(): string {
   return `seed-${crypto.randomUUID()}`;
 }
 
+function worldgenEnabled(): boolean {
+  // Default ON when AI is available; disable with TWUO_LLM_WORLDGEN=false.
+  if (process.env.TWUO_LLM_WORLDGEN === "false") return false;
+  return true;
+}
+
+function seedToUnit(seed: string, salt: string): number {
+  // Deterministic 0..1 derived from seed string; avoids pulling engine RNG helpers into db layer.
+  let h = 2166136261 >>> 0;
+  const s = `${salt}:${seed}`;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return (h >>> 0) / 0x100000000;
+}
+
+function candidateGeoPoints(seed: string, n: number): Array<{ lat: number; lon: number }> {
+  // Uniform-ish on lat/lon (not equal-area, but good enough for variety); keep within plausible inhabited range.
+  const pts: Array<{ lat: number; lon: number }> = [];
+  for (let i = 0; i < n; i++) {
+    const u1 = seedToUnit(seed, `lat:${i}`);
+    const u2 = seedToUnit(seed, `lon:${i}`);
+    const lat = -55 + u1 * (70 - -55); // [-55, 70]
+    const lon = -180 + u2 * 360; // [-180, 180)
+    pts.push({ lat: Math.round(lat * 100) / 100, lon: Math.round(lon * 100) / 100 });
+  }
+  return pts;
+}
+
 function fastMode(): boolean {
   // Default fast in dev to avoid massive latency/credit burn while iterating.
   // Opt out by setting TWUO_FAST_MODE=false explicitly.
@@ -213,6 +286,24 @@ export async function createGame(seed?: string): Promise<GameSnapshot> {
   await ensureDbSchema();
   const s = seed?.trim() ? seed.trim() : newSeed();
   const world = createNewGameWorld(s);
+
+  // Optional LLM worldgen: remove hard-coded starting templates by patching the initial world’s
+  // player identity + neighbors + regional powers based on a random global location.
+  if (worldgenEnabled() && !fastMode() && llmMode() === "ON") {
+    try {
+      const candidates = candidateGeoPoints(s, 7);
+      const gen = await llmGenerateWorldGenScenario({ seedHint: s.slice(0, 24), candidateLocations: candidates });
+      world.player.name = gen.data.player.name;
+      world.player.geographySummary = gen.data.player.geographySummary;
+      world.player.neighbors = gen.data.player.neighbors;
+      world.player.regimeType = gen.data.player.regimeType;
+      // Patch regional actors' display names so the simulation "feels" local anywhere on Earth.
+      world.actors.REGIONAL_1.name = gen.data.regionalPowers[0];
+      world.actors.REGIONAL_2.name = gen.data.regionalPowers[1];
+    } catch {
+      // Fail closed: keep deterministic scenario templates.
+    }
+  }
 
   // Optional LLM generation for Turn 1 briefing/events (replaces deterministic turn-start content).
   let llmArtifact: unknown | undefined;
@@ -413,6 +504,35 @@ export async function submitTurn(
     }
   }
 
+  // Post-process action targets so we don't falsely claim the player attacked a major power
+  // when they named an unmodeled country/region (e.g., "attack Nigeria").
+  if (playerDirective?.trim()) {
+    const directive = playerDirective.trim();
+    const dLower = directive.toLowerCase();
+    const targetRegion = extractTargetRegionFromDirective(directive);
+    for (const a of actions) {
+      if (a.kind !== "MILITARY") continue;
+      if (!targetRegion) continue;
+      const major: Array<NonNullable<typeof a.targetActor>> = ["US", "CHINA", "RUSSIA", "EU"];
+      if (!a.targetActor || !major.includes(a.targetActor)) {
+        if (!a.targetRegion) a.targetRegion = targetRegion;
+        continue;
+      }
+      // Only keep a major-power target if the directive explicitly mentions it.
+      const actorName =
+        a.targetActor === "US"
+          ? "united states"
+          : a.targetActor === "EU"
+            ? "european union"
+            : a.targetActor.toLowerCase();
+      const mentionsMajor = dLower.includes(actorName) || dLower.includes(a.targetActor.toLowerCase());
+      if (!mentionsMajor) {
+        a.targetActor = "REGIONAL_1";
+        if (!a.targetRegion) a.targetRegion = targetRegion;
+      }
+    }
+  }
+
   const { world: nextWorld, outcome } = submitTurnAndAdvance(gameId, world, actions);
 
   // Optional LLM generation for next turn's briefing/events (replaces deterministic turn-start content).
@@ -468,6 +588,10 @@ export async function submitTurn(
   if (!fastMode()) {
     await attachControlRoomView(gameId, nextWorld, finalOutcome.nextSnapshot);
   }
+
+  // Stamp runtime AI mode into the returned snapshot so the client can correctly
+  // decide whether to auto-enhance resolution, show AI indicators, etc.
+  finalOutcome.nextSnapshot.llmMode = llmMode();
 
   // Capture after-state for logging. Must be cloned because `nextWorld` continues to be mutated (LLM turn package, etc.)
   const worldAfter = structuredClone(nextWorld) as WorldState;
@@ -580,7 +704,9 @@ function summarizeAction(a: PlayerAction): string {
     case "ECONOMY":
       return `${a.subkind} (${a.isPublic ? "public" : "private"}, intensity ${a.intensity})`;
     case "MILITARY":
-      return `${a.subkind}${a.targetActor ? ` vs ${a.targetActor}` : ""} (${a.isPublic ? "public" : "private"}, intensity ${a.intensity})`;
+      return `${a.subkind}${
+        a.targetRegion ? ` in ${a.targetRegion}` : a.targetActor ? ` vs ${a.targetActor}` : ""
+      } (${a.isPublic ? "public" : "private"}, intensity ${a.intensity})`;
     case "INTEL":
       return `${a.subkind}${a.targetActor ? ` targeting ${a.targetActor}` : ""} (${a.isPublic ? "public" : "private"}, intensity ${a.intensity})`;
     case "MEDIA":
@@ -628,7 +754,13 @@ export async function getResolutionReport(
     (prev ? extractAfterSnapshot(prev.playerSnapshot) : null) ??
     afterSnap;
 
-  const metric = (label: string, before: number, after: number) => ({ label, before, after, delta: after - before });
+  const metric = (label: string, before: number, after: number) => {
+    // WorldState numbers can be fractional (scenario formulas use weights). For player-facing
+    // reporting, we present clean integers to avoid float artifacts like -20.999999999999996.
+    const b = Math.round(before);
+    const a = Math.round(after);
+    return { label, before: b, after: a, delta: a - b };
+  };
 
   const deltas = [
     metric("Legitimacy", beforeWorld.player.politics.legitimacy, afterWorld.player.politics.legitimacy),
@@ -711,7 +843,21 @@ export async function getResolutionReport(
   const artifacts = (row.llmArtifacts as unknown as Record<string, unknown> | null) ?? null;
   const existing =
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
-  if (existing) return { ...base, llm: existing };
+  // Only reuse cached LLM artifacts if they actually contain a usable narrative.
+  // Old/partial cached shapes can have a headline but no narrative, which makes the UI look blank.
+  if (existing && typeof existing === "object") {
+    const n = (existing as Record<string, unknown>)["narrative"];
+    const lines = Array.isArray(n) ? n.filter((x) => typeof x === "string").map((s) => String(s).trim()).filter(Boolean) : [];
+    const hasTimeline =
+      lines.some((s) => s.startsWith("NEXT 72 HOURS:")) &&
+      lines.some((s) => s.startsWith("2–4 WEEKS:")) &&
+      lines.some((s) => s.startsWith("2–3 MONTHS:")) &&
+      lines.some((s) => s.startsWith("4–6 MONTHS:"));
+    // Require the richer timeline format; otherwise regenerate.
+    if (lines.length >= 10 && hasTimeline) {
+      return { ...base, llm: existing };
+    }
+  }
 
   // Fast mode: don't block the resolution API on LLM generation unless explicitly forced.
   // The UI can render from deterministic `publicResolution` + deltas immediately.
@@ -743,7 +889,9 @@ export async function getResolutionReport(
     });
 
     return { ...base, llm: llm.data };
-  } catch {
+  } catch (e) {
+    // If the user explicitly asked for AI, do not fail silently; surface the error to the client.
+    if (opts?.forceLlm) throw e;
     return base;
   }
 }

@@ -235,6 +235,22 @@ export const LlmResolutionSchema = z.object({
   nextMoves: z.array(z.string().min(10).max(200)).min(2).max(6),
 });
 
+export const LlmWorldGenScenarioSchema = z.object({
+  location: z.object({
+    lat: z.number().min(-85).max(85),
+    lon: z.number().min(-180).max(180),
+    regionLabel: z.string().min(3).max(80),
+  }),
+  player: z.object({
+    name: z.string().min(2).max(50),
+    geographySummary: z.string().min(80).max(900),
+    neighbors: z.array(z.string().min(2).max(40)).min(2).max(6),
+    regimeType: z.enum(["democracy", "hybrid", "authoritarian"]),
+  }),
+  regionalPowers: z.tuple([z.string().min(2).max(40), z.string().min(2).max(40)]),
+  notes: z.array(z.string().min(6).max(160)).max(6).optional(),
+});
+
 const HexColorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
 
 export const LlmControlRoomViewSchema = z.object({

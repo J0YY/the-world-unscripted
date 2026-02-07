@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { FailureDetails } from "@/engine";
 import { apiReset } from "@/components/api";
@@ -10,12 +10,30 @@ import { clearStoredGame, getLastFailure } from "@/components/storage";
 export default function FailurePage() {
   const router = useRouter();
   const failure = useMemo(() => getLastFailure<FailureDetails>(), []);
+  const [seconds, setSeconds] = useState(8);
+  const [autoErr, setAutoErr] = useState<string | null>(null);
 
   async function reset() {
-    await apiReset();
-    clearStoredGame();
-    router.push("/");
+    try {
+      await apiReset();
+      clearStoredGame();
+      router.push("/");
+    } catch (e) {
+      setAutoErr((e as Error).message);
+    }
   }
+
+  useEffect(() => {
+    // Show the game-over screen briefly, then auto-reset back to landing.
+    const t = setInterval(() => setSeconds((s) => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (seconds !== 0) return;
+    void reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seconds]);
 
   return (
     <Shell title="Failure">
@@ -28,6 +46,10 @@ export default function FailurePage() {
             : failure?.type === "LOSS_OF_SOVEREIGNTY"
               ? "The state lost meaningful agency. Invasion/annexation or protectorate conditions removed decision-making power."
               : "The run ended. The system no longer considers you an effective decision-maker."}
+        </div>
+        <div className="mt-3 text-xs font-mono text-white/50">
+          Returning to start in {seconds}s…
+          {autoErr ? ` (auto-reset failed: ${autoErr})` : ""}
         </div>
       </Card>
 
@@ -67,7 +89,7 @@ export default function FailurePage() {
           Back to Start
         </Button>
         <Button variant="danger" onClick={reset}>
-          Reset Simulation
+          Reset now
         </Button>
       </div>
     </Shell>

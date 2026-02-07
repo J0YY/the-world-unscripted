@@ -21,7 +21,8 @@ export async function GET(req: Request) {
     // In-flight de-dupe: prevents request storms from triggering multiple concurrent
     // resolution generations (and burning credits) for the same game+turn.
     const inflight = (globalThis.__twuoResolutionInflight ??= new Map<string, Promise<unknown>>());
-    const key = `${gameId}:${turnNumber}`;
+    // Include forceLlm in key so a "forced" request can't be satisfied by a non-forced in-flight request.
+    const key = `${gameId}:${turnNumber}:${forceLlm ? 1 : 0}`;
     const existing = inflight.get(key);
     if (existing) {
       const report = await existing;

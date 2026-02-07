@@ -37,6 +37,204 @@ const scenarios: ScenarioTemplate[] = [
     ],
   },
   {
+    regionLabel: "Southern Cone (South America)",
+    countryNames: ["Rionegro", "Santeluz", "Puerto Azul"],
+    geographySummary: [
+      "River-and-ports republic with a temperate agricultural core and a concentrated capital; export earnings hinge on commodity prices and shipping access. The interior is productive but politically resentful of the capital. Monetary credibility is fragile; strikes at ports or rail chokepoints ripple fast.",
+      "Mid-latitude coastal state with a narrow industrial belt and long supply lines; energy imports are a persistent vulnerability. A politicized central bank and a powerful trucking union set the tempo of domestic stability. External leverage often arrives through credit terms, not tanks.",
+    ],
+    neighbors: [
+      ["Brazil", "Argentina", "Uruguay"],
+      ["Chile", "Argentina", "Bolivia"],
+    ],
+    regimeTypes: ["democracy", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Brazil" },
+      { id: "REGIONAL_2", name: "Argentina" },
+    ],
+    vulnerabilities: [
+      "FX and external financing sensitivity; confidence shocks transmit quickly to prices.",
+      "Port, rail, and fuel distribution chokepoints are strategic terrain for unions and rivals.",
+      "Polarized politics; legitimacy can erode suddenly after austerity or corruption leaks.",
+    ],
+  },
+  {
+    regionLabel: "Central Asia",
+    countryNames: ["Kharistan", "Orun", "Zeravan"],
+    geographySummary: [
+      "Landlocked steppe-and-mountain state with long borders and sparse settlement; logistics and border control are costly. Transit routes can be leverage or liability depending on sanctions and security guarantees. Elite politics is opaque, patronage-heavy, and vulnerable to succession anxiety.",
+      "Resource-adjacent state with a single export corridor and a capital-dependent bureaucracy; informal networks often outcompete formal institutions. External actors compete through pipelines, rail, and intelligence relationships. Domestic stability depends on price control and security service cohesion.",
+    ],
+    neighbors: [
+      ["Kazakhstan", "Uzbekistan", "Kyrgyzstan"],
+      ["Uzbekistan", "Tajikistan", "Afghanistan"],
+    ],
+    regimeTypes: ["authoritarian", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Russia" },
+      { id: "REGIONAL_2", name: "Turkey" },
+    ],
+    vulnerabilities: [
+      "Single-corridor export dependence; transit disputes can become existential.",
+      "Succession risk and factional security services; coups are plausible under stress.",
+      "Border insecurity and smuggling networks undermine state revenue and legitimacy.",
+    ],
+  },
+  {
+    regionLabel: "South Asia",
+    countryNames: ["Indara", "Kashmiron", "Suryan"],
+    geographySummary: [
+      "Densely populated state on a contested frontier; small incidents can scale into national crises under media pressure. Water and energy politics are inseparable from security. Urban supply chains are fragile; protests can become self-sustaining when fuel and food prices spike.",
+      "Mountain-frontier polity with limited strategic depth and a security-heavy state; diaspora remittances stabilize budgets but create external exposure. Domestic cohesion depends on patronage and narrative control. Border skirmishes are as much political theater as military reality—until they aren't.",
+    ],
+    neighbors: [
+      ["India", "Pakistan", "Bangladesh"],
+      ["Pakistan", "Afghanistan", "India"],
+    ],
+    regimeTypes: ["hybrid", "democracy", "authoritarian"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "India" },
+      { id: "REGIONAL_2", name: "Pakistan" },
+    ],
+    vulnerabilities: [
+      "High sensitivity to fuel/food prices; unrest can spike with little warning.",
+      "Border incidents are politically weaponized; escalation control is difficult.",
+      "Institutional overload: courts, police, and bureaucracy are stretched and politicized.",
+    ],
+  },
+  {
+    regionLabel: "North Africa",
+    countryNames: ["Maghraba", "Qasria", "Saharat"],
+    geographySummary: [
+      "Coastal-urban state with a vast desert hinterland; control weakens rapidly outside cities. Energy rents can buy time but also entrench corruption and elite rivalry. Migration, smuggling, and militia politics create constant low-grade coercion.",
+      "Trade-facing state with a tight capital and contested periphery; tourism and shipping are lifelines that panic under security headlines. Security services are strong but fragmented. Foreign partners prefer stability but demand visible compliance on sanctions and border control.",
+    ],
+    neighbors: [
+      ["Algeria", "Tunisia", "Libya"],
+      ["Morocco", "Algeria", "Mauritania"],
+    ],
+    regimeTypes: ["authoritarian", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Egypt" },
+      { id: "REGIONAL_2", name: "Algeria" },
+    ],
+    vulnerabilities: [
+      "Security periphery: militia and smuggling networks can outpace the state.",
+      "Tourism/shipping fragility; perception shocks hit revenue faster than policy can respond.",
+      "Elite cohesion depends on rents; reforms can trigger backlash from insiders.",
+    ],
+  },
+  {
+    regionLabel: "Persian Gulf",
+    countryNames: ["Al-Hadid", "Bahrun", "Qatirah"],
+    geographySummary: [
+      "Small, wealthy energy exporter with outsized media and finance influence; security depends on external guarantees and careful balancing. Shipping chokepoints nearby make every crisis international. Domestic stability is strong until legitimacy is questioned by succession or subsidy reforms.",
+      "Coastal state with a concentrated infrastructure footprint; a handful of facilities are strategic single points of failure. Foreign basing and intelligence partnerships bring protection and exposure. Rival narratives target you because leverage is cheap and attention is high.",
+    ],
+    neighbors: [
+      ["Saudi Arabia", "United Arab Emirates", "Iran"],
+      ["Iraq", "Kuwait", "Saudi Arabia"],
+    ],
+    regimeTypes: ["authoritarian", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Saudi Arabia" },
+      { id: "REGIONAL_2", name: "Iran" },
+    ],
+    vulnerabilities: [
+      "Infrastructure concentration: a few facilities drive most revenue and coercive leverage.",
+      "External security dependence; alliance politics can flip quickly under scandal or war.",
+      "Information war exposure; narrative shocks can trigger capital flight or sanction scrutiny.",
+    ],
+  },
+  {
+    regionLabel: "Caucasus",
+    countryNames: ["Ardzen", "Caspira", "Vardak"],
+    geographySummary: [
+      "Mountain corridor state between larger powers; transit and pipelines are leverage until they become targets. Frozen conflicts and displaced communities are permanent political tools. Domestic politics is sharp-edged; small concessions read as weakness.",
+      "Compact state with a strategic pass and a contested border; security depends on rapid mobilization and patronage in the officer corps. External actors compete through arms deals and intelligence ties. Economic stability hinges on remittances and a single export route.",
+    ],
+    neighbors: [
+      ["Georgia", "Armenia", "Azerbaijan"],
+      ["Russia", "Georgia", "Turkey"],
+    ],
+    regimeTypes: ["hybrid", "authoritarian"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Russia" },
+      { id: "REGIONAL_2", name: "Turkey" },
+    ],
+    vulnerabilities: [
+      "Frozen conflict risk; escalation can be triggered by a single incident.",
+      "Transit chokepoints: pipelines/rail are both revenue and coercion vectors.",
+      "Elite politics are factional; security service rivalry can sabotage policy.",
+    ],
+  },
+  {
+    regionLabel: "Central America / Caribbean",
+    countryNames: ["San Cielo", "Nueva Mar", "Isla Verdad"],
+    geographySummary: [
+      "Port-and-services state with high exposure to crime networks; security legitimacy hinges on visible order and predictable prices. Remittances and tourism are lifelines that panic under headlines. External pressure is often legal/financial rather than military.",
+      "Small island state with concentrated infrastructure and a narrow tax base; hurricane logistics and fuel imports are strategic vulnerabilities. Political coalitions are fragile and transactional. A single corruption scandal can trigger mass street mobilization.",
+    ],
+    neighbors: [
+      ["Mexico", "Guatemala", "Honduras"],
+      ["Dominican Republic", "Haiti", "Puerto Rico"],
+    ],
+    regimeTypes: ["democracy", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Mexico" },
+      { id: "REGIONAL_2", name: "Colombia" },
+    ],
+    vulnerabilities: [
+      "Organized crime capture risk; coercion and corruption erode legitimacy together.",
+      "Tourism/remittance dependence; shocks translate quickly into unrest.",
+      "External legal/financial pressure can be decisive (sanctions, banking access).",
+    ],
+  },
+  {
+    regionLabel: "East Africa (Great Lakes)",
+    countryNames: ["Kivura", "Nyando", "Rutana"],
+    geographySummary: [
+      "Highland state with dense population pockets and contested borderlands; armed groups exploit cross-border sanctuaries and local grievances. Mining and customs revenue is politicized. Security operations are costly and can backfire into legitimacy loss.",
+      "Lakeside trade hub with a crowded capital and weak peripheral governance; refugee flows and militia logistics are persistent constraints. External actors operate through training missions and quiet deals. Domestic cohesion depends on elite bargaining more than ideology.",
+    ],
+    neighbors: [
+      ["Uganda", "Rwanda", "DRC"],
+      ["Kenya", "Uganda", "Tanzania"],
+    ],
+    regimeTypes: ["authoritarian", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Kenya" },
+      { id: "REGIONAL_2", name: "Ethiopia" },
+    ],
+    vulnerabilities: [
+      "Border militia dynamics; security operations can generate insurgency blowback.",
+      "Customs/mining revenue capture; elite cohesion is rent-dependent.",
+      "Refugee and humanitarian pressure creates international scrutiny and leverage.",
+    ],
+  },
+  {
+    regionLabel: "Western Pacific (island chain)",
+    countryNames: ["Pelagia", "Atarua", "Namos"],
+    geographySummary: [
+      "Small maritime state spread across islands; sovereignty is measured in patrol capacity and port access. Great-power competition arrives through basing offers, telecom deals, and disaster relief. Domestic politics is local and relational, but external stakes are strategic.",
+      "Remote archipelago with fragile infrastructure; fuel and food import dependence is near-total. The capital is exposed to storms and supply disruptions. Foreign investment can stabilize budgets or become a sovereignty trap.",
+    ],
+    neighbors: [
+      ["Philippines", "Papua New Guinea", "Australia"],
+      ["Japan", "Taiwan", "Philippines"],
+    ],
+    regimeTypes: ["democracy", "hybrid"],
+    regionalPowers: [
+      { id: "REGIONAL_1", name: "Australia" },
+      { id: "REGIONAL_2", name: "Japan" },
+    ],
+    vulnerabilities: [
+      "Import dependence; supply shocks translate immediately into legitimacy stress.",
+      "Basing/telecom influence operations; sovereignty can be traded away quietly.",
+      "Disaster logistics exposure; one storm can dominate the political calendar.",
+    ],
+  },
+  {
     regionLabel: "Eastern Europe",
     countryNames: ["Drevnia", "Karsovia", "Belograd"],
     geographySummary: [

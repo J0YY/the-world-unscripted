@@ -9,6 +9,7 @@ import {
   LlmResolutionSchema,
   LlmRewriteTurnSchema,
   LlmSuggestDirectiveSchema,
+  LlmWorldGenScenarioSchema,
 } from "./llmSchemas";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
@@ -370,6 +371,8 @@ export async function llmParsePlayerDirective(args: {
     "- Always return 1..remainingSlots actions.",
     "- Use intensity 1-3. Choose isPublic (true/false).",
     "- If the directive asks for something too extreme/illegal/impossible, map it to the closest allowed action(s) instead of failing.",
+    "- IMPORTANT TARGETING: If the directive names a country/region that is NOT one of the actor ids, put that place name into targetRegion (free text).",
+    "- Do NOT set targetActor to US/CHINA/RUSSIA/EU unless the directive explicitly mentions that actor; prefer REGIONAL_1/REGIONAL_2 for local conflicts.",
   ].join("\n");
 
   const system = [
@@ -685,7 +688,21 @@ export async function llmGenerateResolution(args: {
     "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
     "Make the player's directive impact EXTREMELY obvious: connect directive fragments -> translated ops -> observed effects.",
     "Use specific, grounded intelligence language. No fantasy.",
-    "Do NOT reveal internal raw state dumps. You MAY reference the provided deltas (numbers) directly, because they are player-facing scores.",
+    "Do NOT reveal internal raw state dumps.",
+    "You MAY reference the provided deltas (numbers) directly, because they are player-facing scores.",
+    "Hard constraint: do NOT contradict SCORE_DELTAS. If a stat delta is +0, do not imply it worsened/improved.",
+    "Hard constraint: explicitly mention (by label) the 2–4 largest absolute SCORE_DELTAS in the narrative, including the signed number in parentheses, e.g. 'Economic stability (-4)'.",
+    "If the deltas look counterintuitive, explain *why* (timing lags, second-order effects, credibility costs, etc) rather than handwaving.",
+    "Hard constraint: perceptions must be 2–8 items. Each perceptions[].read MUST be <= 160 characters.",
+    "Hard constraint: directiveImpact must be 2–8 items.",
+    "Narrative MUST include forward-looking second-order impacts over the next 6 months.",
+    "Narrative format requirement: include these labeled time blocks as separate lines:",
+    "- NEXT 72 HOURS:",
+    "- 2–4 WEEKS:",
+    "- 2–3 MONTHS:",
+    "- 4–6 MONTHS:",
+    "Each time block line must include at least one concrete impact on: economy, domestic politics, security/war, or external posture.",
+    "Minimum narrative length: 10 lines. Maximum: 18 lines.",
   ].join("\n");
 
   const user = [
@@ -733,11 +750,195 @@ export async function llmGenerateResolution(args: {
     system,
     user,
     schemaName: "LlmResolutionSchema",
-    validate: (obj) => LlmResolutionSchema.parse(obj),
+    validate: (obj) => {
+      // Be forgiving on common LLM failure modes: too many items / overly long lines.
+      if (typeof obj !== "object" || obj === null) return LlmResolutionSchema.parse(obj);
+      const o = obj as Record<string, unknown>;
+      const safeStr = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+      const safeStrArr = (v: unknown, maxItems: number, maxLen: number) =>
+        Array.isArray(v) ? v.filter((x) => typeof x === "string").map((s) => String(s).trim().slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
+
+      const narrative = Array.isArray(o.narrative)
+        ? o.narrative
+            .filter((x) => typeof x === "string")
+            .map((s) => String(s).slice(0, 220))
+            .slice(0, 18)
+        : o.narrative;
+      const threatsArr = safeStrArr(o.threats, 7, 180);
+      const nextMovesArr = safeStrArr(o.nextMoves, 6, 200);
+
+      // Normalize perceptions objects + enforce max read length.
+      const perceptionsRaw = Array.isArray(o.perceptions) ? o.perceptions.slice(0, 8) : [];
+      const perceptionsArr = perceptionsRaw
+        .map((p) => {
+          if (typeof p !== "object" || p === null) return null;
+          const pr = p as Record<string, unknown>;
+          const actor = safeStr(pr.actor, 40) || "—";
+          const posture = safeStr(pr.posture, 12).toLowerCase();
+          const read = safeStr(pr.read, 160);
+          const okPosture = posture === "hostile" || posture === "neutral" || posture === "friendly" ? posture : "neutral";
+          if (!read) return null;
+          return { actor, posture: okPosture, read };
+        })
+        .filter(Boolean) as Array<{ actor: string; posture: "hostile" | "neutral" | "friendly"; read: string }>;
+
+      // Pad perceptions to min 2 using real actor shifts if needed.
+      while (perceptionsArr.length < 2) {
+        const s = args.actorShifts[perceptionsArr.length];
+        if (s) {
+          const trustDir = s.trustDelta > 0 ? "trust improved" : s.trustDelta < 0 ? "trust eroded" : "trust held";
+          const escDir =
+            s.escalationDelta > 0 ? "escalation appetite increased" : s.escalationDelta < 0 ? "escalation appetite cooled" : "escalation posture steady";
+          perceptionsArr.push({
+            actor: String(s.actor).slice(0, 40),
+            posture: (String(s.posture).toLowerCase() as "hostile" | "neutral" | "friendly") ?? "neutral",
+            read: `${trustDir}; ${escDir}. Messaging will reflect internal constraints.`,
+          });
+          continue;
+        }
+        perceptionsArr.push({
+          actor: "Foreign desks",
+          posture: "neutral",
+          read: "Outside capitals are waiting for confirmation and testing your red lines quietly.",
+        });
+      }
+
+      // Normalize directiveImpact + pad to min 2.
+      const diRaw = Array.isArray(o.directiveImpact) ? o.directiveImpact.slice(0, 8) : [];
+      const directiveImpactArr = diRaw
+        .map((it) => {
+          if (typeof it !== "object" || it === null) return null;
+          const r = it as Record<string, unknown>;
+          const directiveFragment = safeStr(r.directiveFragment, 120);
+          const translatedOps = safeStrArr(r.translatedOps, 4, 140);
+          const observedEffects = safeStrArr(r.observedEffects, 5, 160);
+          if (!directiveFragment || observedEffects.length === 0) return null;
+          return { directiveFragment, translatedOps, observedEffects };
+        })
+        .filter(Boolean) as Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }>;
+
+      const topDelta = [...args.deltas]
+        .filter((d) => Number.isFinite(d.delta) && d.delta !== 0)
+        .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+        .slice(0, 4)
+        .map((d) => `${d.label} (${d.delta >= 0 ? "+" : ""}${d.delta})`);
+      const ops = args.translatedActions.map((a) => a.summary).slice(0, 4);
+      while (directiveImpactArr.length < 2) {
+        if (directiveImpactArr.length === 0) {
+          directiveImpactArr.push({
+            directiveFragment: args.directive?.trim()?.slice(0, 120) || "Primary directive",
+            translatedOps: ops.slice(0, 2),
+            observedEffects: topDelta.length ? topDelta.slice(0, 3) : ["Immediate effects are visible, but second-order costs are still forming."],
+          });
+        } else {
+          directiveImpactArr.push({
+            directiveFragment: "Second-order effects",
+            translatedOps: ops.slice(2, 4),
+            observedEffects: topDelta.length ? topDelta.slice(-2) : ["Delayed effects will land across financing, legitimacy, and external posture."],
+          });
+        }
+      }
+
+      // Ensure threats/nextMoves meet minimums.
+      const threats = threatsArr.length ? threatsArr : args.threats.slice(0, 7);
+      while (threats.length < 2) threats.push("Pressure vector: external reactions remain fluid.");
+      const nextMoves = nextMovesArr.length ? nextMovesArr : ["Clarify intent publicly with a bounded message.", "Harden logistics and financing against retaliation."];
+
+      const narrativeArr = Array.isArray(narrative) ? (narrative as string[]) : [];
+      const trimmedNarrative = narrativeArr.map((s) => String(s).trim()).filter(Boolean);
+
+      const ensureLine = (prefix: string, fallback: string) => {
+        if (!trimmedNarrative.some((s) => s.startsWith(prefix))) trimmedNarrative.push(`${prefix} ${fallback}`.slice(0, 220));
+      };
+
+      // Enforce time blocks even if the model forgets.
+      ensureLine("NEXT 72 HOURS:", "Immediate reactions: messaging hardens; markets reprice risk; security posture tightens.");
+      ensureLine("2–4 WEEKS:", "Second-order effects: protests and countermeasures; financing pressure; escalation control becomes harder.");
+      ensureLine("2–3 MONTHS:", "Lagged impacts: inflation and debt stress bite; elite fractures widen; external actors set conditions.");
+      ensureLine("4–6 MONTHS:", "Compounding costs: sustained readiness strains economy; legitimacy erosion risks ouster dynamics.");
+
+      // Pad to a detailed minimum so the narrative box isn't sparse.
+      while (trimmedNarrative.length < 12) {
+        const extra = topDelta.length
+          ? `Assessment: key metrics moving: ${topDelta.slice(0, 3).join(", ")}. Expect spillover across legitimacy, financing, and posture.`
+          : "Assessment: effects are visible but uncertainty remains; expect lagged economic and political consequences.";
+        trimmedNarrative.push(extra.slice(0, 220));
+      }
+
+      const normalized = {
+        ...o,
+        narrative: trimmedNarrative.slice(0, 18),
+        threats: threats.slice(0, 7),
+        nextMoves: nextMoves.slice(0, 6),
+        perceptions: perceptionsArr.slice(0, 8),
+        directiveImpact: directiveImpactArr.slice(0, 8),
+      };
+      return LlmResolutionSchema.parse(normalized);
+    },
     temperature: 0.6,
   });
 
   return { data, llmRaw: raw };
+}
+
+export async function llmGenerateWorldGenScenario(args: {
+  seedHint: string;
+  candidateLocations: Array<{ lat: number; lon: number }>;
+}): Promise<{ data: z.infer<typeof LlmWorldGenScenarioSchema>; llmRaw: unknown }> {
+  const system = [
+    "You generate the starting country/location for a grounded geopolitical simulation.",
+    "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
+    "The goal is GLOBAL VARIETY across runs. Do not default to the Eastern Mediterranean, West Africa, or Southeast Asia unless the provided coordinates strongly indicate it.",
+    "Choose ONE candidate location. If the coordinate is in open ocean, you may snap to the nearest landmass within ~400km and adjust lat/lon slightly.",
+    "Make the result plausible: neighbors should match the chosen part of the world (use real neighboring countries).",
+    "The player country name should be fictional but believable for the region (not a real country name).",
+    "No fantasy, no sci-fi, no supernatural. Keep it modern and realistic.",
+    "Do NOT output any numeric scores/indices besides lat/lon.",
+  ].join("\n");
+
+  const user = [
+    `SEED_HINT: ${args.seedHint}`,
+    "",
+    "CANDIDATE_LOCATIONS (choose one; may snap slightly to land):",
+    JSON.stringify(args.candidateLocations, null, 2),
+    "",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        location: { lat: 12.34, lon: 56.78, regionLabel: "string" },
+        player: {
+          name: "string (fictional country name)",
+          geographySummary: "2–5 sentences, grounded and specific",
+          neighbors: ["string", "string"],
+          regimeType: "democracy|hybrid|authoritarian",
+        },
+        regionalPowers: ["string", "string"],
+        notes: ["optional short strings"],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const { data, raw } = await chatJson({
+    system,
+    user,
+    schemaName: "LlmWorldGenScenarioSchema",
+    validate: (obj) => LlmWorldGenScenarioSchema.parse(obj),
+    temperature: 0.8,
+  });
+
+  // Defensive normalization
+  const neighbors = Array.from(new Set(data.player.neighbors.map((s) => s.trim()).filter(Boolean))).slice(0, 6);
+  const regionalPowers = [data.regionalPowers[0].trim(), data.regionalPowers[1].trim()] as [string, string];
+  return {
+    data: {
+      ...data,
+      player: { ...data.player, neighbors },
+      regionalPowers,
+    },
+    llmRaw: raw,
+  };
 }
 
 export async function llmGenerateControlRoomView(args: {
