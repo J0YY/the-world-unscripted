@@ -87,10 +87,15 @@ export default function GameControlRoomPage() {
 
   const gameId = useMemo(() => getStoredGameId(), []);
 
-  async function onSubmitDirective(directive: string) {
+  async function onSubmitDirective(
+    directive: string,
+    onProgress?: (p: { completed: number; total: number; label: string }) => void,
+  ) {
     const gameId = getStoredGameId();
     if (!gameId) return;
+    onProgress?.({ completed: 0, total: 2, label: "Submitting directive…" });
     const outcome = await apiSubmitTurnWithDirective(gameId, [], directive.trim());
+    onProgress?.({ completed: 1, total: 2, label: "Advancing turn…" });
     setLastOutcome(outcome);
     if (outcome.failure) {
       setLastFailure(outcome.failure);
@@ -104,13 +109,14 @@ export default function GameControlRoomPage() {
       const next = outcome.nextSnapshot;
       setSnap(next);
 
-      // Start the expensive LLM work immediately and concurrently:
-      // - resolution narrative for the resolved turn (for AfterAction modal)
-      // - next snapshot hydration (Turn N+1 briefing/events)
-      // This overlaps LLM latency with the time the user is reading the modal.
-      void apiResolutionReport(gameId, outcome.turnResolved, { forceLlm: true }).catch(() => {});
       // Poll snapshot briefly to pick up hydrated events/briefing (non-blocking server).
-      if (needsHydration(next)) void pollHydrationUntilReady(gameId).catch(() => {});
+      if (needsHydration(next)) {
+        void pollHydrationUntilReady(gameId)
+          .catch(() => {})
+          .finally(() => onProgress?.({ completed: 2, total: 2, label: "Brief ready." }));
+      } else {
+        onProgress?.({ completed: 2, total: 2, label: "Brief ready." });
+      }
     }
   }
 

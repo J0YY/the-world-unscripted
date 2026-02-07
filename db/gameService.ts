@@ -11,10 +11,9 @@ import { createNewGameWorld, getPlayerSnapshot, submitTurnAndAdvance } from "@/e
 import {
   llmGenerateCountryProfile,
   llmGenerateDiplomacy,
+  llmGenerateBriefingSlim,
   llmGenerateResolution,
   llmGenerateWorldGenScenario,
-  llmGenerateBriefingHeadlinesOnly,
-  llmGenerateBriefingIntelBriefsOnly,
   llmGenerateTurnEventsOnly,
   llmMode,
   llmParsePlayerDirective,
@@ -26,6 +25,8 @@ declare global {
   var __twuoSnapshotHydrateInflight: Map<string, Promise<void>> | undefined;
   // In-flight de-dupe for diplomacy generation (non-blocking).
   var __twuoDiplomacyInflight: Map<string, Promise<void>> | undefined;
+  // In-flight de-dupe for resolution generation (non-blocking).
+  var __twuoResolutionGenInflight: Map<string, Promise<void>> | undefined;
 }
 
 function hydrateDiplomacyInBackground(args: { gameId: string; world: WorldState; snapshot: GameSnapshot }): void {
@@ -62,9 +63,13 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
   const briefingReady =
     !!world.current?.briefing &&
     Array.isArray(world.current.briefing.headlines) &&
-    world.current.briefing.headlines.length > 0 &&
+    world.current.briefing.headlines.length >= 2 &&
+    Array.isArray(world.current.briefing.diplomaticMessages) &&
+    world.current.briefing.diplomaticMessages.length >= 1 &&
+    Array.isArray(world.current.briefing.domesticRumors) &&
+    world.current.briefing.domesticRumors.length >= 1 &&
     Array.isArray(world.current.briefing.intelBriefs) &&
-    world.current.briefing.intelBriefs.length > 0;
+    world.current.briefing.intelBriefs.length >= 2;
   const needsTurnStart =
     world.turnStartGenerator === "llm" &&
     (!briefingReady || world.current.incomingEvents.length === 0);
@@ -99,33 +104,6 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
       return persistQueue;
     };
 
-    const mergeUnique = (prev: string[], next: string[]) => {
-      const out: string[] = [];
-      const seen = new Set<string>();
-      for (const s of [...prev, ...next]) {
-        const k = typeof s === "string" ? s.trim() : "";
-        if (!k || seen.has(k)) continue;
-        seen.add(k);
-        out.push(k);
-      }
-      return out;
-    };
-
-    const mergeIntel = (
-      prev: Array<{ text: string; confidence: "low" | "med" | "high" }>,
-      next: Array<{ text: string; confidence: "low" | "med" | "high" }>,
-    ) => {
-      const out: Array<{ text: string; confidence: "low" | "med" | "high" }> = [];
-      const seen = new Set<string>();
-      for (const it of [...prev, ...next]) {
-        const t = typeof it?.text === "string" ? it.text.trim() : "";
-        if (!t || seen.has(t)) continue;
-        seen.add(t);
-        out.push({ text: t, confidence: it.confidence });
-      }
-      return out;
-    };
-
     const phase = world.turn === 1 ? ("TURN_1" as const) : ("TURN_N" as const);
     const sectionArgs = { world, phase };
 
@@ -133,19 +111,10 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
 
     if (needsTurnStart) {
       tasks.push(
-        llmGenerateBriefingIntelBriefsOnly(sectionArgs)
+        llmGenerateBriefingSlim(sectionArgs)
           .then((r) => {
-            world.current.briefing.intelBriefs = mergeIntel(world.current.briefing.intelBriefs, r.intelBriefs);
-            snapshot.playerView.briefing.intelBriefs = world.current.briefing.intelBriefs;
-            return enqueuePersist();
-          })
-          .catch(() => {}),
-      );
-      tasks.push(
-        llmGenerateBriefingHeadlinesOnly(sectionArgs)
-          .then((r) => {
-            world.current.briefing.headlines = mergeUnique(world.current.briefing.headlines, r.headlines);
-            snapshot.playerView.briefing.headlines = world.current.briefing.headlines;
+            world.current.briefing = r.briefing;
+            snapshot.playerView.briefing = r.briefing;
             return enqueuePersist();
           })
           .catch(() => {}),
@@ -952,6 +921,8 @@ export async function getResolutionReport(
   threats: string[];
   directiveParseNotes?: string[];
   llm?: unknown;
+  llmPending?: boolean;
+  llmError?: string;
 }> {
   await ensureDbSchema();
   const game = await prisma.game.findUnique({ where: { id: gameId } });
@@ -1100,6 +1071,8 @@ export async function getResolutionReport(
   const artifacts = (row.llmArtifacts as unknown as Record<string, unknown> | null) ?? null;
   const existing =
     artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolution"] ?? null : null;
+  const existingErr =
+    artifacts && typeof artifacts === "object" ? (artifacts as Record<string, unknown>)["resolutionError"] ?? null : null;
   // Only reuse cached LLM artifacts if they actually contain a usable narrative.
   // Old/partial cached shapes can have a headline but no narrative, which makes the UI look blank.
   // If we already have a valid cached LLM narrative, return it even when `forceLlm=1`.
@@ -1120,44 +1093,68 @@ export async function getResolutionReport(
     // Require the richer timeline format; otherwise regenerate.
     // Also require that the narrative does not leak internal action labels or numeric deltas.
     if (lines.length >= 10 && hasTimeline && !leaksInternalOps && !leaksScoreDeltas) {
-      return { ...base, llm: existing };
+      return { ...base, llm: existing, llmPending: false };
     }
   }
 
-  // Always generate LLM resolution when AI is ON (unless a cached valid one exists).
-  // We do not use fast-mode deterministic fallbacks for resolution narrative.
+  // AI is ON but we don't have a valid cached narrative yet. Do NOT block the request.
+  // Kick off background generation and return immediately so the UI can poll.
+  const inflight = (globalThis.__twuoResolutionGenInflight ??= new Map<string, Promise<void>>());
+  const key = `${gameId}:${turnNumber}`;
+  if (!inflight.has(key)) {
+    const p = (async () => {
+      try {
+        const llm = await llmGenerateResolution({
+          turnNumber,
+          directive: row.playerDirective ?? undefined,
+          translatedActions,
+          deltas,
+          actorShifts,
+          threats,
+          worldBefore: beforeWorld,
+          worldAfter: afterWorld,
+        });
 
-  try {
-    const llm = await llmGenerateResolution({
-      turnNumber,
-      directive: row.playerDirective ?? undefined,
-      translatedActions,
-      deltas,
-      actorShifts,
-      threats,
-      worldBefore: beforeWorld,
-      worldAfter: afterWorld,
-    });
-
-    await prisma.turnLog.update({
-      where: { id: row.id },
-      data: {
-        llmArtifacts: {
-          ...(artifacts && typeof artifacts === "object" ? artifacts : {}),
-          resolution: llm.data,
-          resolutionRaw: llm.llmRaw,
-          beforeSnapshotTurn: beforeSnap.turn,
-          afterSnapshotTurn: afterSnap.turn,
-        } as unknown as object,
-      },
-    });
-
-    return { ...base, llm: llm.data };
-  } catch (e) {
-    // If the user explicitly asked for AI, do not fail silently; surface the error to the client.
-    if (opts?.forceLlm) throw e;
-    return base;
+        await prisma.turnLog.update({
+          where: { id: row.id },
+          data: {
+            llmArtifacts: {
+              ...(artifacts && typeof artifacts === "object" ? artifacts : {}),
+              resolution: llm.data,
+              resolutionRaw: llm.llmRaw,
+              resolutionError: null,
+              resolutionErrorAt: null,
+              beforeSnapshotTurn: beforeSnap.turn,
+              afterSnapshotTurn: afterSnap.turn,
+            } as unknown as object,
+          },
+        });
+      } catch (e) {
+        // Persist the error so the UI can surface what's wrong.
+        try {
+          await prisma.turnLog.update({
+            where: { id: row.id },
+            data: {
+              llmArtifacts: {
+                ...(artifacts && typeof artifacts === "object" ? artifacts : {}),
+                resolutionError: String((e as Error)?.message ?? e),
+                resolutionErrorAt: new Date().toISOString(),
+              } as unknown as object,
+            },
+          });
+        } catch {
+          // ignore
+        }
+      }
+    })().finally(() => inflight.delete(key));
+    inflight.set(key, p);
   }
+
+  return {
+    ...base,
+    llmPending: true,
+    llmError: typeof existingErr === "string" && existingErr.trim() ? existingErr.trim() : undefined,
+  };
 }
 
 async function fillFailureTimeline(
