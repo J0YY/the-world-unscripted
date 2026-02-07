@@ -19,6 +19,11 @@ function deltaClass(label: string, delta: number) {
   return good ? "text-green-600" : "text-red-600";
 }
 
+function arrowSymbol(delta: number) {
+  if (!Number.isFinite(delta) || delta === 0) return "—";
+  return delta > 0 ? "▲" : "▼";
+}
+
 export default function TurnDeltasPanel({ snapshot }: { snapshot: GameSnapshot }) {
   const [rows, setRows] = useState<Array<{ label: string; before: number; after: number; delta: number }> | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -83,12 +88,11 @@ export default function TurnDeltasPanel({ snapshot }: { snapshot: GameSnapshot }
           {ordered.map((d) => (
             <li key={d.label} className="flex items-center justify-between gap-2 text-sm font-mono">
               <span className="text-[var(--ds-gray-1000)]">{d.label}</span>
-              <span className="tabular-nums text-[var(--ds-gray-900)]">
-                {d.before} → {d.after}{" "}
-                <span className={deltaClass(d.label, d.delta)}>
-                  ({d.delta >= 0 ? "+" : ""}
-                  {d.delta})
+              <span className="flex items-center gap-2 tabular-nums text-[var(--ds-gray-900)]">
+                <span className={deltaClass(d.label, d.delta)} aria-hidden="true">
+                  {arrowSymbol(d.delta)}
                 </span>
+                <span>{d.after}</span>
               </span>
             </li>
           ))}
