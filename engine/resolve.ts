@@ -143,8 +143,9 @@ export function resolvePlayerActions(world: WorldState, actions: PlayerAction[])
         if (a.subkind === "SUBSIDIES") {
           hiddenOps.push({ kind: "DELTA", key: "player.politics.publicApproval", amount: +3 * i, reason: "Subsidies ease pain", visibility: "hidden" });
           hiddenOps.push({ kind: "DELTA", key: "player.politics.legitimacy", amount: +2 * i, reason: "Visible relief buys time", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.politics.unrest", amount: -2 * i, reason: "Immediate relief reduces protest pressure", visibility: "hidden" });
           hiddenOps.push({ kind: "DELTA", key: "player.economy.debtStress", amount: +3 * i, reason: "Subsidies widen deficit", visibility: "hidden" });
-          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: -2 * i, reason: "Financing concerns rise", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: -1 * i, reason: "Financing concerns rise (partially offset by short-term stability)", visibility: "hidden" });
           scheduled.push({ id: `T${world.turn}-SC-INFLATION_LAG`, dueTurn: world.turn + rngInt(world.rng, 1, 2), kind: "INFLATION_LAG", payload: {} });
           publicConsequences.push("Economy: targeted subsidies announced; markets are watching financing.");
           break;

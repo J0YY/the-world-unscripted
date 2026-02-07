@@ -3,7 +3,6 @@ import {
   buildCountryProfile,
   PlayerActionSchema,
   type GameSnapshot,
-  type IncomingEvent,
   type PlayerAction,
   type TurnOutcome,
   type WorldState,
@@ -14,12 +13,9 @@ import {
   llmGenerateDiplomacy,
   llmGenerateResolution,
   llmGenerateWorldGenScenario,
-  llmGenerateBriefingDiplomaticMessagesOnly,
-  llmGenerateBriefingDomesticRumorsOnly,
   llmGenerateBriefingHeadlinesOnly,
   llmGenerateBriefingIntelBriefsOnly,
   llmGenerateTurnEventsOnly,
-  llmGenerateTurnPackage,
   llmMode,
   llmParsePlayerDirective,
 } from "./llm";
@@ -146,28 +142,10 @@ async function hydrateSnapshotWithLlmIfNeeded(args: {
           .catch(() => {}),
       );
       tasks.push(
-        llmGenerateBriefingDiplomaticMessagesOnly(sectionArgs)
-          .then((r) => {
-            world.current.briefing.diplomaticMessages = mergeUnique(world.current.briefing.diplomaticMessages, r.diplomaticMessages);
-            snapshot.playerView.briefing.diplomaticMessages = world.current.briefing.diplomaticMessages;
-            return enqueuePersist();
-          })
-          .catch(() => {}),
-      );
-      tasks.push(
         llmGenerateBriefingHeadlinesOnly(sectionArgs)
           .then((r) => {
             world.current.briefing.headlines = mergeUnique(world.current.briefing.headlines, r.headlines);
             snapshot.playerView.briefing.headlines = world.current.briefing.headlines;
-            return enqueuePersist();
-          })
-          .catch(() => {}),
-      );
-      tasks.push(
-        llmGenerateBriefingDomesticRumorsOnly(sectionArgs)
-          .then((r) => {
-            world.current.briefing.domesticRumors = mergeUnique(world.current.briefing.domesticRumors, r.domesticRumors);
-            snapshot.playerView.briefing.domesticRumors = world.current.briefing.domesticRumors;
             return enqueuePersist();
           })
           .catch(() => {}),

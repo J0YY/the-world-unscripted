@@ -1077,6 +1077,7 @@ function deriveBriefingFeed(snapshot: GameSnapshot): UiBriefingItem[] {
     });
   }
 
-  return items.slice(0, 10);
+  // Keep the feed light for demo + latency (LLM hydration). Cap hard.
+  return items.slice(0, 6);
 }
 
