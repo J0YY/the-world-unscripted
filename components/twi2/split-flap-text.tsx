@@ -188,9 +188,35 @@ export function SplitFlapAudioProvider({ children }: { children: React.ReactNode
   return <SplitFlapAudioContext.Provider value={value}>{children}</SplitFlapAudioContext.Provider>;
 }
 
-export function SplitFlapMuteToggle({ className = "" }: { className?: string }) {
+export function SplitFlapMuteToggle({
+  className = "",
+  variant = "text",
+}: {
+  className?: string;
+  variant?: "text" | "pill";
+}) {
   const audio = useSplitFlapAudio();
   if (!audio) return null;
+
+  if (variant === "pill") {
+    const on = !audio.isMuted;
+    return (
+      <button
+        onClick={audio.toggleMute}
+        className={[
+          "flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wider border transition",
+          on ? "border-emerald-500/50 text-emerald-400 bg-emerald-950/30" : "border-neutral-500/50 text-neutral-500 bg-neutral-900/30",
+          className,
+        ].join(" ")}
+        aria-label={audio.isMuted ? "Unmute sound" : "Mute sound"}
+        type="button"
+      >
+        <div className={`h-1.5 w-1.5 rounded-full ${on ? "bg-emerald-400 animate-pulse" : "bg-neutral-600"}`} />
+        <span>{on ? "SND ON" : "SND OFF"}</span>
+      </button>
+    );
+  }
+
   return (
     <button
       onClick={audio.toggleMute}
