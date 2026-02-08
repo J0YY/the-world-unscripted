@@ -94,7 +94,23 @@ export function resolvePlayerActions(world: WorldState, actions: PlayerAction[])
           }
         }
 
-        const trustDelta = (a.tone === "conciliatory" ? +4 : a.tone === "firm" ? +1 : -4) * intensity;
+        // Treaty proposals and offers give significantly larger trust bumps
+        // than generic messages, reflecting formal commitment signaling.
+        let trustDelta: number;
+        if (a.subkind === "TREATY_PROPOSAL" || a.subkind === "OFFER") {
+          trustDelta = (a.tone === "conciliatory" ? +7 : a.tone === "firm" ? +3 : -2) * intensity;
+          // Formal proposals also boost alliance commitment strength.
+          hiddenOps.push({
+            kind: "DELTA_ACTOR",
+            actorId: a.targetActor,
+            field: "allianceCommitmentStrength",
+            amount: +3 * intensity,
+            reason: "Treaty/offer proposal signals alliance commitment",
+            visibility: "hidden",
+          });
+        } else {
+          trustDelta = (a.tone === "conciliatory" ? +4 : a.tone === "firm" ? +1 : -4) * intensity;
+        }
         hiddenOps.push({
           kind: "DELTA_ACTOR",
           actorId: a.targetActor,
@@ -143,9 +159,10 @@ export function resolvePlayerActions(world: WorldState, actions: PlayerAction[])
         if (a.subkind === "SUBSIDIES") {
           hiddenOps.push({ kind: "DELTA", key: "player.politics.publicApproval", amount: +3 * i, reason: "Subsidies ease pain", visibility: "hidden" });
           hiddenOps.push({ kind: "DELTA", key: "player.politics.legitimacy", amount: +2 * i, reason: "Visible relief buys time", visibility: "hidden" });
-          hiddenOps.push({ kind: "DELTA", key: "player.politics.unrest", amount: -2 * i, reason: "Immediate relief reduces protest pressure", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.politics.unrest", amount: -3 * i, reason: "Immediate relief reduces protest pressure", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: +1 * i, reason: "Short-term demand stabilization", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.inflationPressure", amount: -1 * i, reason: "Price controls ease headline inflation", visibility: "hidden" });
           hiddenOps.push({ kind: "DELTA", key: "player.economy.debtStress", amount: +3 * i, reason: "Subsidies widen deficit", visibility: "hidden" });
-          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: -1 * i, reason: "Financing concerns rise (partially offset by short-term stability)", visibility: "hidden" });
           scheduled.push({ id: `T${world.turn}-SC-INFLATION_LAG`, dueTurn: world.turn + rngInt(world.rng, 1, 2), kind: "INFLATION_LAG", payload: {} });
           publicConsequences.push("Economy: targeted subsidies announced; markets are watching financing.");
           break;
@@ -159,22 +176,32 @@ export function resolvePlayerActions(world: WorldState, actions: PlayerAction[])
           break;
         }
         if (a.subkind === "INDUSTRIAL_PUSH") {
-          hiddenOps.push({ kind: "DELTA", key: "player.economy.unemployment", amount: -2 * i, reason: "Industrial push absorbs labor", visibility: "hidden" });
-          hiddenOps.push({ kind: "DELTA", key: "player.economy.debtStress", amount: +2 * i, reason: "Industrial policy spending", visibility: "hidden" });
-          scheduled.push({ id: `T${world.turn}-SC-ELITE_SPLIT_RISK`, dueTurn: world.turn + 2, kind: "ELITE_SPLIT_RISK", payload: {} });
-          publicConsequences.push("Economy: industrial push launched; benefits are delayed and uneven.");
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: +3 * i, reason: "Infrastructure investment strengthens economic base", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.unemployment", amount: -3 * i, reason: "Industrial push absorbs labor", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.inflationPressure", amount: -1 * i, reason: "Supply chain improvements ease prices", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.politics.legitimacy", amount: +2 * i, reason: "Visible public works boost government credibility", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.politics.unrest", amount: -2 * i, reason: "Jobs and construction reduce protest pressure", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.debtStress", amount: +1 * i, reason: "Industrial policy spending", visibility: "hidden" });
+          // Delayed benefit: infrastructure yields returns over time.
+          scheduled.push({ id: `T${world.turn}-SC-INFRA_BENEFIT`, dueTurn: world.turn + 2, kind: "INFRASTRUCTURE_BENEFIT", payload: { intensity: i } });
+          publicConsequences.push("Economy: infrastructure investment launched; short-term boost with longer-term dividends expected.");
           break;
         }
         // TRADE_DEAL_ATTEMPT
         const t = a.targetActor ?? rngPick(world.rng, ["EU", "CHINA", "US"]);
         const trust = world.actors[t].trust;
-        if (trust >= 55 || rngChance(world.rng, 0.25 + trust / 200)) {
-          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: +3 * i, reason: "Trade deal improves outlook", visibility: "hidden" });
-          hiddenOps.push({ kind: "DELTA_ACTOR", actorId: t, field: "trust", amount: +2 * i, reason: "Deal improves trust", visibility: "hidden" });
+        if (trust >= 45 || rngChance(world.rng, 0.35 + trust / 200)) {
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: +4 * i, reason: "Trade deal improves outlook", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.inflationPressure", amount: -2 * i, reason: "Trade access eases import costs", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.politics.credibilityGlobal", amount: +2, reason: "Successful trade engagement boosts credibility", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA_ACTOR", actorId: t, field: "trust", amount: +3 * i, reason: "Deal improves trust", visibility: "hidden" });
+          // Delayed dividend: trade benefits compound over time.
+          scheduled.push({ id: `T${world.turn}-SC-TRADE_DIV`, dueTurn: world.turn + 1, kind: "TRADE_DIVIDEND", payload: { intensity: i } });
           publicConsequences.push(`Economy: trade talks with ${world.actors[t].name} show movement; terms are still unclear.`);
           signalsUnknown.push("Trade deal implementation risk remains; domestic winners/losers will emerge later.");
         } else {
-          hiddenOps.push({ kind: "DELTA", key: "player.politics.credibilityGlobal", amount: -2, reason: "Failed trade approach looks weak", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.politics.credibilityGlobal", amount: -1, reason: "Failed trade approach looks weak", visibility: "hidden" });
+          hiddenOps.push({ kind: "DELTA", key: "player.economy.economicStability", amount: +1 * i, reason: "Trade outreach signals openness", visibility: "hidden" });
           publicConsequences.push(`Economy: outreach to ${world.actors[t].name} stalled; counterpart demanded preconditions.`);
         }
         break;

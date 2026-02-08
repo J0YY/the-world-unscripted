@@ -36,7 +36,19 @@ export function submitTurnAndAdvance(
   const actionRes = resolvePlayerActions(world, actions);
 
   // 3) Commit scheduled consequence queue.
-  world.scheduled = [...eventRes.scheduled, ...actionRes.scheduled];
+  // IMPORTANT: both resolve functions start from a copy of world.scheduled,
+  // so naively concatenating would duplicate every existing item. De-dupe by id.
+  {
+    const seen = new Set<string>();
+    const merged: typeof world.scheduled = [];
+    for (const item of [...eventRes.scheduled, ...actionRes.scheduled]) {
+      if (!seen.has(item.id)) {
+        seen.add(item.id);
+        merged.push(item);
+      }
+    }
+    world.scheduled = merged;
+  }
 
   // 4) Apply public then hidden operations (ordering is deterministic).
   const publicOps = [...eventRes.publicOps, ...actionRes.publicOps];

@@ -779,18 +779,13 @@ function deriveCountryColors(snapshot: GameSnapshot, mode: "relationship" | "wor
   const econ = ind.economicStability.estimatedValue;
   const infl = ind.inflationPressure.estimatedValue;
   const unrest = ind.unrestLevel.estimatedValue;
+  const war = ind.warStatus.estimatedValue;
+  const sov = ind.sovereigntyIntegrity.estimatedValue;
+  const legitimacy = ind.legitimacy.estimatedValue;
 
-  // Calculate relationship index based on economic health, credibility, and stability
-  const relationshipIndex = Math.round(
-    clamp(
-      cred * 0.35 + econ * 0.3 + (100 - infl) * 0.2 + (100 - unrest) * 0.15,
-      0,
-      100,
-    ),
-  );
-
-  // Determine event types from incoming events
-  const eventTypes = snapshot.playerView.incomingEvents.map((e) => e.type);
+  // Determine event types and actors from incoming events
+  const events = snapshot.playerView.incomingEvents;
+  const eventTypes = events.map((e) => e.type);
 
   const colors: CountryColorMap[] = [];
 
@@ -833,74 +828,185 @@ function deriveCountryColors(snapshot: GameSnapshot, mode: "relationship" | "wor
     });
   }
 
-  // For "relationship" mode: color countries based on their threat level and interactions
-  if (mode === "relationship" && relationshipIndex > 30) {
-    const mainActors: Array<{ code: string; threat: "high" | "med" | "low" }> = [
-      { code: "US", threat: "high" },
-      { code: "CN", threat: "high" },
-      { code: "RU", threat: "high" },
-      { code: "DE", threat: "med" },
-      { code: "FR", threat: "med" },
-      { code: "GB", threat: "med" },
-      { code: "JP", threat: "med" },
-      { code: "IN", threat: "low" },
-      { code: "BR", threat: "low" },
+  // For "relationship" mode: dynamically color countries based on game state.
+  // Score each country 0-100 using diplomacy stances, player indicators, and
+  // incoming-event actors.  The map updates every turn as the player acts.
+  if (mode === "relationship") {
+    // ── Global diplomatic attractiveness ─────────────────────────
+    // How attractive the player nation appears as a partner.  Derived from
+    // key state indicators so it shifts with every player action.
+    const globalAttractiveness = clamp(
+      cred * 0.25 +
+        econ * 0.20 +
+        (100 - war) * 0.15 +
+        legitimacy * 0.15 +
+        (100 - unrest) * 0.10 +
+        sov * 0.10 +
+        (100 - infl) * 0.05,
+      0,
+      100,
+    );
+
+    // ── Map ActorId → country codes for bloc propagation ─────────
+    const actorIdToBloc: Record<string, string[]> = {
+      US: ["US"],
+      CHINA: ["CN"],
+      RUSSIA: ["RU"],
+      EU: [
+        "DE", "FR", "IT", "ES", "NL", "BE", "AT", "SE", "DK",
+        "FI", "IE", "PT", "GR", "CZ", "RO", "HU", "BG", "SK",
+        "HR", "SI", "EE", "LV", "LT", "LU", "PL",
+      ],
+      REGIONAL_1: [],
+      REGIONAL_2: [],
+    };
+
+    // Extra actor-name look-ups for IDs that don't map 1:1
+    const actorNameLower: Record<string, string> = {
+      "united states": "US",
+      usa: "US",
+      america: "US",
+      china: "CN",
+      prc: "CN",
+      russia: "RU",
+      "russian federation": "RU",
+      "european union": "EU",
+    };
+
+    // ── Per-country relationship score (0 = hostile, 100 = allied) ──
+    const countryScores = new Map<string, number>();
+
+    // ── Compute event modifiers per actor ─────────────────────────
+    // Incoming events shift the relationship score with their originating actor.
+    const actorEventMod = new Map<string, number>();
+    const eventShifts: Record<string, number> = {
+      SANCTIONS_WARNING: -15,
+      BORDER_INCIDENT: -12,
+      CYBER_INTRUSION: -10,
+      ARMS_INTERDICTION: -8,
+      INSURGENT_ATTACK: -6,
+      LEAKED_AUDIO: -5,
+      PROTESTS: -3,
+      ALLIANCE_SIGNAL: +8,
+      IMF_CONTACT: +5,
+    };
+    for (const ev of events) {
+      const actor = ev.actor;
+      if (actor && actor !== "DOMESTIC" && actor !== "UNKNOWN") {
+        const shift = eventShifts[ev.type] ?? 0;
+        actorEventMod.set(actor, (actorEventMod.get(actor) ?? 0) + shift);
+      }
+    }
+
+    // ── Score each diplomacy nation ───────────────────────────────
+    // Stance (0-100) is the PRIMARY driver.  It changes when the player
+    // sends DIPLOMACY actions (MESSAGE, OFFER, THREAT, TREATY_PROPOSAL)
+    // or chats with ministers in the DiplomacyPanel.
+    // The stance is weighted at ~80% of the score so that a single
+    // positive diplomatic action visibly shifts the map color.
+    const nations = snapshot.diplomacy?.nations ?? [];
+    for (const nation of nations) {
+      const stance = clamp(nation.stance, 0, 100);
+
+      // Modulate stance with player indicators & turn events,
+      // but at reduced weight so stance dominates.
+      //   credMod   : ±3.75   (player credibility shifts perception)
+      //   econMod   : ±2.5    (strong economy = more appealing)
+      //   warPenalty : 0 to -5 (active war makes everyone cautious)
+      //   unrestMod : ±1.4    (domestic instability spills over)
+      //   evMod     : variable (this turn's events with this actor)
+      const credMod = (cred - 50) * 0.075;
+      const econMod = (econ - 50) * 0.05;
+      const warPenalty = -war * 0.05;
+      const unrestMod = -(unrest - 30) * 0.02;
+      const evMod = actorEventMod.get(nation.id) ?? 0;
+
+      const score = clamp(
+        stance + credMod + econMod + warPenalty + unrestMod + evMod,
+        0,
+        100,
+      );
+
+      // Resolve to country code(s)
+      const directCode =
+        resolveCountryCode(nation.name) ??
+        actorNameLower[nation.name.toLowerCase()] ??
+        null;
+
+      if (directCode && directCode.length === 2) {
+        countryScores.set(directCode, score);
+      }
+
+      // Propagate to bloc members (e.g. EU → all EU member codes)
+      const blocCodes = [...(actorIdToBloc[nation.id] ?? [])];
+      if (directCode && blocCodes.length === 0 && directCode.length === 2) {
+        blocCodes.push(directCode);
+      }
+      for (const bc of blocCodes) {
+        const existing = countryScores.get(bc);
+        if (existing !== undefined) {
+          // Blend: direct diplomacy overrides bloc propagation
+          countryScores.set(bc, existing * 0.6 + score * 0.4);
+        } else {
+          // Bloc member inherits 70 % actor score + 30 % global baseline
+          countryScores.set(bc, score * 0.70 + globalAttractiveness * 0.30);
+        }
+      }
+    }
+
+    // ── Score neighbours ──────────────────────────────────────────
+    const relNeighbors = snapshot.countryProfile.neighbors ?? [];
+    for (const nName of relNeighbors) {
+      const nCode = resolveCountryCode(nName);
+      if (!nCode || countryScores.has(nCode)) continue;
+      // Neighbours reflect sovereignty integrity + credibility.
+      const neighborScore = clamp(
+        50 +
+          (sov - 50) * 0.30 +
+          (cred - 50) * 0.25 +
+          (globalAttractiveness - 50) * 0.15,
+        0,
+        100,
+      );
+      countryScores.set(nCode, neighborScore);
+    }
+
+    // ── Fill remaining major powers with globally-tinted neutral ──
+    const majorPowers = [
+      "US", "CN", "RU", "GB", "FR", "DE", "JP", "IN", "BR", "AU",
+      "SA", "TR", "KR", "ZA", "NG", "EG", "ID", "MX", "AR", "PK",
+      "IL", "IR", "CA", "IT", "ES",
     ];
+    for (const code of majorPowers) {
+      if (countryScores.has(code)) continue;
+      countryScores.set(
+        code,
+        clamp(globalAttractiveness * 0.55 + 50 * 0.45, 0, 100),
+      );
+    }
 
-    const countryThreatMap = new Map<string, "high" | "med" | "low">();
+    // ── Convert scores → CountryColorMap entries ─────────────────
+    const scoreToIntensity = (s: number): "high" | "med" | "low" => {
+      if (s >= 52) return "low"; // good relationship
+      if (s >= 30) return "med"; // neutral / strained
+      return "high"; // hostile / deteriorated
+    };
+    const scoreToColor = (s: number): string => {
+      if (s >= 52) return "#22c55e"; // green
+      if (s >= 30) return "#eab308"; // yellow
+      return "#dc2626"; // red
+    };
 
-    // Assess threat based on incoming events
-    eventTypes.forEach((type) => {
-      // Events from external actors that threaten player indirectly
-      const threatMap: Record<string, "high" | "med" | "low"> = {
-        SANCTIONS_WARNING: "high",      // Sanctions indicate hostile relationship
-        BORDER_INCIDENT: "high",        // Border incidents escalate tension
-        CYBER_INTRUSION: "high",        // Cyber attacks are aggressive
-        ARMS_INTERDICTION: "med",       // Procurement issues create friction
-        PROTESTS: "med",                // Internal unrest is concerning
-        IMF_CONTACT: "low",             // Financial engagement is neutral
-        ALLIANCE_SIGNAL: "low",         // Alliance signals can be supportive
-        LEAKED_AUDIO: "med",            // Intelligence gathering
-        INSURGENT_ATTACK: "med",        // Regional instability
-      };
-
-      const threatLevel = threatMap[type] || "low";
-      
-      // Get source countries from events
-      const eventCountries: Record<string, string[]> = {
-        BORDER_INCIDENT: ["RU", "PL", "UA", "CN", "IN"],
-        SANCTIONS_WARNING: ["US", "EU"],
-        CYBER_INTRUSION: ["CN", "RU"],
-        ARMS_INTERDICTION: ["RU", "CN"],
-        ALLIANCE_SIGNAL: ["US", "GB", "DE"],
-      };
-
-      const countries = eventCountries[type];
-      if (countries) {
-        countries.forEach((cc) => {
-          const current = countryThreatMap.get(cc);
-          // Keep the highest threat level
-          if (!current || (threatLevel === "high") || (threatLevel === "med" && current === "low")) {
-            countryThreatMap.set(cc, threatLevel);
-          }
-        });
-      }
-    });
-
-    // Color countries: red=high threat, yellow=med, green=low/friendly
-    mainActors.forEach(({ code, threat }) => {
-      const threatLevel = countryThreatMap.get(code) || threat;
+    countryScores.forEach((score, code) => {
       const loc = countryLocationMap[code];
-      
-      if (loc && !colors.some((c) => c.countryCode === code)) {
-        colors.push({
-          countryCode: code,
-          lat: loc.lat,
-          lon: loc.lon,
-          intensity: threatLevel,
-          color: threatLevel === "high" ? "#dc2626" : threatLevel === "med" ? "#eab308" : "#22c55e",
-        });
-      }
+      if (!loc) return;
+      colors.push({
+        countryCode: code,
+        lat: loc.lat,
+        lon: loc.lon,
+        intensity: scoreToIntensity(score),
+        color: scoreToColor(score),
+      });
     });
   }
 

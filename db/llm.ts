@@ -1071,12 +1071,22 @@ export async function llmParsePlayerDirective(args: {
   const allowMilitary = explicitKinetic || explicitForcePrep;
   if (!allowMilitary) {
     const guessTargetActor = () => {
+      const ALIASES: Record<string, keyof typeof args.world.actors> = {
+        america: "US", usa: "US", "united states": "US", "united states of america": "US",
+        china: "CHINA", prc: "CHINA", beijing: "CHINA",
+        russia: "RUSSIA", moscow: "RUSSIA", kremlin: "RUSSIA",
+        eu: "EU", europe: "EU", "european union": "EU", brussels: "EU",
+      };
       const entries = Object.entries(args.world.actors) as Array<[keyof typeof args.world.actors, (typeof args.world.actors)[keyof typeof args.world.actors]]>;
       for (const [id, actor] of entries) {
         const name = actor.name.toLowerCase();
         const tokens = name.split(/\s+/).filter(Boolean);
         if (tokens.some((t) => t.length >= 4 && d.includes(t))) return id;
         if (d.includes(name)) return id;
+      }
+      const sortedAliases = Object.keys(ALIASES).sort((a, b) => b.length - a.length);
+      for (const alias of sortedAliases) {
+        if (d.includes(alias)) return ALIASES[alias];
       }
       return "REGIONAL_1" as const;
     };

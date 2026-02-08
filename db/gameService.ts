@@ -255,23 +255,73 @@ function extractTargetRegionFromDirective(directive: string): string | null {
   return normalizePlaceLabel(raw);
 }
 
-function pickTargetActorFromDirective(directive: string, world: WorldState) {
-  const d = directive.toLowerCase();
-  // Try to match explicit actor names mentioned by the user (e.g., "turkey").
-  const entries = Object.entries(world.actors) as Array<[keyof typeof world.actors, (typeof world.actors)[keyof typeof world.actors]]>;
+// Common aliases that players use for the six modeled actor IDs.
+const ACTOR_ALIASES: Record<string, keyof WorldState["actors"]> = {
+  america: "US",
+  usa: "US",
+  "united states": "US",
+  "united states of america": "US",
+  us: "US",
+  china: "CHINA",
+  prc: "CHINA",
+  beijing: "CHINA",
+  russia: "RUSSIA",
+  moscow: "RUSSIA",
+  kremlin: "RUSSIA",
+  eu: "EU",
+  europe: "EU",
+  "european union": "EU",
+  brussels: "EU",
+};
+
+/**
+ * Resolve a country/actor name mentioned in a directive to an ActorId.
+ * Checks world.actors names, the alias table, and falls back to pressure actor.
+ * @param text  the text fragment to search (lowercased externally is fine)
+ * @param world current world state
+ * @param fallback what to return when nothing matches (default: highest-pressure actor)
+ */
+function resolveActorFromText(
+  text: string,
+  world: WorldState,
+  fallback?: keyof WorldState["actors"],
+): keyof WorldState["actors"] {
+  const d = text.toLowerCase();
+  // 1. Exact / substring match on world actor names.
+  const entries = Object.entries(world.actors) as Array<
+    [keyof typeof world.actors, (typeof world.actors)[keyof typeof world.actors]]
+  >;
   for (const [id, actor] of entries) {
     const name = actor.name.toLowerCase();
+    if (d.includes(name)) return id;
     const tokens = name.split(/\s+/).filter(Boolean);
     if (tokens.some((t) => t.length >= 4 && d.includes(t))) return id;
-    if (d.includes(name)) return id;
   }
 
-  // If the directive looks like a kinetic action against a place we don't model as an actor,
-  // don't default to a major power (US/CHINA/RUSSIA/EU). Use a generic regional actor instead.
+  // 2. Alias table (longest-first so "united states of america" beats "us").
+  const sortedAliases = Object.keys(ACTOR_ALIASES).sort((a, b) => b.length - a.length);
+  for (const alias of sortedAliases) {
+    if (d.includes(alias)) return ACTOR_ALIASES[alias];
+  }
+
+  return fallback ?? (pickPressureActor(world).id as keyof WorldState["actors"]);
+}
+
+function pickTargetActorFromDirective(directive: string, world: WorldState) {
+  const d = directive.toLowerCase();
+
+  const resolved = resolveActorFromText(d, world);
+  // If the resolved actor is a major power but the directive has a kinetic verb
+  // aimed at an unmodeled country, prefer REGIONAL_1 so we don't falsely claim
+  // the player attacked a superpower.
+  if (resolved !== "REGIONAL_1" && resolved !== "REGIONAL_2") {
+    return resolved;
+  }
+
   const wantsKinetic = /\b(invade|attack|strike|bomb|conquer|occupy|seize|annex|war)\b/.test(d);
   if (wantsKinetic && extractTargetRegionFromDirective(directive)) return "REGIONAL_1";
 
-  return pickPressureActor(world).id;
+  return resolved;
 }
 
 function fallbackActionsFromDirective(args: {
@@ -282,7 +332,16 @@ function fallbackActionsFromDirective(args: {
   const d = args.directive.toLowerCase();
   const actions: PlayerAction[] = [];
   const rationale: string[] = [];
-  const targetActorId = pickTargetActorFromDirective(args.directive, args.world);
+
+  // ── Split the directive into clauses so we can resolve per-intent targets ──
+  // e.g. "alliance with america and full invasion on brazil"
+  //   → ["alliance with america", "full invasion on brazil"]
+  const clauses = d.split(/\band\b|\bthen\b|[;,]/).map((s) => s.trim()).filter(Boolean);
+
+  // Resolve a per-clause target actor (falls back to overall directive target).
+  const overallTarget = pickTargetActorFromDirective(args.directive, args.world);
+  const clauseTarget = (clause: string) => resolveActorFromText(clause, args.world, overallTarget);
+
   const targetRegion = extractTargetRegionFromDirective(args.directive) ?? undefined;
 
   const isPublic = /\bpublic\b|\bannounce\b|\bon tv\b|\bpress\b/.test(d);
@@ -306,38 +365,69 @@ function fallbackActionsFromDirective(args: {
   const wantNarrative = /\bpropaganda\b|\bnarrative\b|\bmedia\b|\bcensor\b/.test(d);
   const wantReform = /\banti-corruption\b|\breform\b|\bpurge\b|\belection\b/.test(d);
 
+  // ── Prioritize military actions when explicit kinetic verbs are present ──
+  // This prevents alliance/diplomacy from filling all slots before invasion.
+  if ((wantAttack || wantMobilize) && actions.length < args.remainingSlots) {
+    // Find the clause that contains the kinetic verb so we resolve its specific target.
+    const kineticClause = clauses.find((c) =>
+      /\b(attack|strike|bomb|invade|annex|war|conquer|occupy|seize|mobiliz|troops|deploy)\b/.test(c),
+    ) ?? d;
+    const milTarget = clauseTarget(kineticClause);
+    const milRegion = extractTargetRegionFromDirective(kineticClause) ?? targetRegion;
+    actions.push({
+      kind: "MILITARY",
+      subkind: wantAttack ? (wantConquest ? "FULL_INVASION" : "LIMITED_STRIKE") : "MOBILIZE",
+      intensity: wantAttack && wantConquest ? (Math.max(intensity, 2) as 1 | 2 | 3) : intensity,
+      isPublic,
+      targetActor: milTarget,
+      targetRegion: milRegion ?? (wantAttack && wantConquest ? "capital corridor" : "border zone"),
+    });
+    rationale.push(
+      wantAttack && wantConquest
+        ? `Translate conquest intent into a full invasion targeting ${milTarget}.`
+        : `Translate coercive intent into a bounded military operation targeting ${milTarget}.`,
+    );
+  }
+
   if (wantIndustry && actions.length < args.remainingSlots) {
     actions.push({ kind: "ECONOMY", subkind: "INDUSTRIAL_PUSH", intensity, isPublic });
     rationale.push("Translate infrastructure/industry intent into an industrial push.");
   }
   if (wantInvestment && actions.length < args.remainingSlots) {
-    const mentionsChina = /\bchina\b/.test(d);
+    const investClause = clauses.find((c) => /\b(invest|fdi|funding|capital|tech sector)\b/.test(c)) ?? d;
+    const investTarget = clauseTarget(investClause);
     actions.push({
       kind: "ECONOMY",
       subkind: "TRADE_DEAL_ATTEMPT",
       intensity,
       isPublic,
-      targetActor: mentionsChina ? "CHINA" : targetActorId,
+      targetActor: investTarget,
     });
-    rationale.push("Translate investment/FDI intent into trade/investment talks (economic outreach).");
+    rationale.push(`Translate investment/FDI intent into trade/investment talks with ${investTarget}.`);
   }
   if (wantAlliance && actions.length < args.remainingSlots) {
+    // Find the clause that mentions alliance/bloc and resolve its target.
+    const allyClause = clauses.find((c) =>
+      /\b(alliance|bloc|pact|treaty|mutual defense|collective security|security guarantee)\b/.test(c),
+    ) ?? d;
+    const allyTarget = clauseTarget(allyClause);
     const topic = /\btrade\b|\beconomic\b|\bmarket\b/.test(d) ? "trade" : "security";
     actions.push({
       kind: "DIPLOMACY",
       subkind: "TREATY_PROPOSAL",
-      targetActor: targetActorId,
+      targetActor: allyTarget,
       topic,
       tone: "conciliatory",
       intensity,
       isPublic: isPublic || /\bpublicly\b|\bannounce\b/.test(d),
     });
-    rationale.push("Translate alliance/bloc intent into a treaty proposal to the closest modeled partner/pressure actor.");
+    rationale.push(`Translate alliance intent into a treaty proposal to ${allyTarget}.`);
+    // Only add a second diplomatic channel if there's still room.
     if (actions.length < args.remainingSlots) {
       actions.push({
         kind: "DIPLOMACY",
         subkind: "MESSAGE",
-        targetActor: targetActorId === "REGIONAL_1" ? "REGIONAL_2" : "REGIONAL_1",
+        targetActor: allyTarget === "REGIONAL_1" ? "REGIONAL_2" : "REGIONAL_1",
         topic,
         tone: "firm",
         intensity: Math.max(1, intensity - 1) as 1 | 2 | 3,
@@ -354,30 +444,17 @@ function fallbackActionsFromDirective(args: {
     actions.push({ kind: "ECONOMY", subkind: "AUSTERITY", intensity: Math.max(1, intensity - 1) as 1 | 2 | 3, isPublic: true });
     rationale.push("Translate fiscal intent into controlled austerity.");
   }
-  if ((wantAttack || wantMobilize) && actions.length < args.remainingSlots) {
-    actions.push({
-      kind: "MILITARY",
-      subkind: wantAttack ? (wantConquest ? "FULL_INVASION" : "LIMITED_STRIKE") : "MOBILIZE",
-      intensity: wantAttack && wantConquest ? (Math.max(intensity, 2) as 1 | 2 | 3) : intensity,
-      isPublic,
-      targetActor: targetActorId,
-      targetRegion: targetRegion ?? (wantAttack && wantConquest ? "capital corridor" : "border zone"),
-    });
-    rationale.push(
-      wantAttack && wantConquest
-        ? "Translate conquest intent into a full invasion (high-risk, high-cost)."
-        : "Translate coercive intent into a bounded military operation.",
-    );
-  }
   if (wantIntel && actions.length < args.remainingSlots) {
+    const intelClause = clauses.find((c) => /\b(intel|spy|surveillance|counterintel|covert)\b/.test(c)) ?? d;
+    const intelTarget = clauseTarget(intelClause);
     actions.push({
       kind: "INTEL",
       subkind: "SURVEILLANCE",
       intensity: Math.min(3, intensity + 0) as 1 | 2 | 3,
       isPublic: false,
-      targetActor: targetActorId,
+      targetActor: intelTarget,
     });
-    rationale.push("Translate intelligence intent into surveillance to reduce deception risk.");
+    rationale.push(`Translate intelligence intent into surveillance targeting ${intelTarget}.`);
   }
   if ((wantKidnap || wantExtort) && actions.length < args.remainingSlots) {
     actions.push({
@@ -385,7 +462,7 @@ function fallbackActionsFromDirective(args: {
       subkind: "COVERT_OP",
       intensity: Math.max(2, intensity) as 1 | 2 | 3,
       isPublic: false,
-      targetActor: targetActorId,
+      targetActor: overallTarget,
       targetRegion: targetRegion ?? "leadership circle",
     });
     rationale.push("Translate abduction/extortion intent into a covert operation (illegal/unethical actions are modeled as covert ops).");
@@ -403,7 +480,7 @@ function fallbackActionsFromDirective(args: {
     actions.push({
       kind: "DIPLOMACY",
       subkind: "MESSAGE",
-      targetActor: targetActorId,
+      targetActor: overallTarget,
       topic: "sanctions",
       tone: "firm",
       intensity: 2,
@@ -674,6 +751,16 @@ export async function submitTurn(
   const lastSnap = game.lastPlayerSnapshot as unknown as GameSnapshot;
   if (lastSnap?.diplomacy) {
     outcome.nextSnapshot.diplomacy = lastSnap.diplomacy;
+    // Sync stances from updated world-state trust so the relationship map
+    // reflects the impact of DIPLOMACY actions taken this turn.
+    for (const nation of outcome.nextSnapshot.diplomacy.nations) {
+      const actorKey = (Object.keys(nextWorld.actors) as Array<keyof typeof nextWorld.actors>).find(
+        (k) => nextWorld.actors[k].id === nation.id,
+      );
+      if (actorKey) {
+        nation.stance = nextWorld.actors[actorKey].trust;
+      }
+    }
   }
 
   // Fill failure timeline from the last 3 turns (if applicable).

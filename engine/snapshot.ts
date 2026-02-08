@@ -184,11 +184,29 @@ export function buildSnapshot(gameId: string, world: WorldState, status: "ACTIVE
     }),
   };
 
+  // Build baseline diplomacy from engine state so the relationship map
+  // always has data even before LLM hydration replaces it with richer profiles.
+  const baselineDiplomacy = {
+    nations: (Object.keys(world.actors) as ActorId[]).map((k) => {
+      const a = world.actors[k];
+      return {
+        id: a.id,
+        name: a.name,
+        ministerName: "",
+        description: "",
+        stance: a.trust,
+        hiddenAgenda: "",
+        chatHistory: [] as Array<{ role: "user" | "minister"; text: string; timestamp: number }>,
+      };
+    }),
+  };
+
   return {
     gameId,
     turn: world.turn,
     status,
     countryProfile: buildCountryProfile(world, indicators),
+    diplomacy: baselineDiplomacy,
     actionLimit: ACTION_LIMIT,
     actionTemplates: defaultActionTemplates(world),
     playerView: {

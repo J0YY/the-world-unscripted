@@ -72,7 +72,9 @@ export type ScheduledConsequence = {
     | "INSURGENCY_SPIKE"
     | "INFLATION_LAG"
     | "ELITE_SPLIT_RISK"
-    | "INTEL_REVELATION";
+    | "INTEL_REVELATION"
+    | "INFRASTRUCTURE_BENEFIT"
+    | "TRADE_DIVIDEND";
   payload: unknown;
 };
 
