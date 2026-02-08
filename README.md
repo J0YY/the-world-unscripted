@@ -1,6 +1,18 @@
 # The Unscripted World Order (MVP)
 
-A deterministic, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer is optional and is used strictly for narrative synthesis and directive parsing — not for state transitions.
+A deterministic, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer, using **Mistral AI,** is used for narrative synthesis and directive parsing, and is what makes this game possible.
+
+![gif1](https://github.com/user-attachments/assets/9f20dbb2-8328-43d9-bf84-e3a168704d8b)
+
+
+![gif2](https://github.com/user-attachments/assets/5c1c12eb-da31-4fab-a374-f0d2e2a073b5)
+
+
+![gif3](https://github.com/user-attachments/assets/146597e2-0764-4355-bdfd-970ac4969a34)
+
+
+![gif4](https://github.com/user-attachments/assets/3a9811db-69da-4484-b470-b16ebe8d3aea)
+
 
 ## Local dev (Node 20+)
 
