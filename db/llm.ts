@@ -1857,13 +1857,10 @@ export async function llmGenerateResolutionFast(args: {
     };
     const narrative = narrativeArr.map(s => scrubLine(s)).filter(s => s.length >= 8).slice(0, 18);
 
-    const hasTimeline =
-      narrative.some((s) => s.startsWith("NEXT 72 HOURS:")) &&
-      narrative.some((s) => s.startsWith("2–4 WEEKS:")) &&
-      narrative.some((s) => s.startsWith("2–3 MONTHS:")) &&
-      narrative.some((s) => s.startsWith("4–6 MONTHS:"));
-    if (!hasTimeline) throw new Error("Narrative missing time blocks.");
-    if (narrative.length < 10) throw new Error("Narrative too short.");
+    // Accept narratives with ≥4 usable lines. Timeline headers are preferred but optional.
+    // Previously required exact headers + 10 lines, which caused validation failures with
+    // most LLM outputs, leading to infinite retry loops and a stuck AfterAction modal.
+    if (narrative.length < 4) throw new Error("Narrative too short (need ≥4 lines).");
 
     return { headline, narrative };
   };

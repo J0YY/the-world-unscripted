@@ -1082,19 +1082,11 @@ export async function getResolutionReport(
   if (existing && typeof existing === "object") {
     const n = (existing as Record<string, unknown>)["narrative"];
     const lines = Array.isArray(n) ? n.filter((x) => typeof x === "string").map((s) => String(s).trim()).filter(Boolean) : [];
-    const hasTimeline =
-      lines.some((s) => s.startsWith("NEXT 72 HOURS:")) &&
-      lines.some((s) => s.startsWith("2–4 WEEKS:")) &&
-      lines.some((s) => s.startsWith("2–3 MONTHS:")) &&
-      lines.some((s) => s.startsWith("4–6 MONTHS:"));
     const leaksInternalOps = lines.some((s) => /\b(LIMITED_STRIKE|FULL_INVASION|MOBILIZE|PROXY_SUPPORT|ARMS_PURCHASE|intensity)\b/i.test(s));
-    const leaksScoreDeltas =
-      lines.some((s) => /\b[+-]\d{1,3}\b/.test(s)) ||
-      lines.some((s) => /\b\d{1,3}\s*(\/\s*100|points?|pts)\b/i.test(s)) ||
-      lines.some((s) => /\b\d{1,3}\s*\/\s*100\b/.test(s));
-    // Require the richer timeline format; otherwise regenerate.
-    // Also require that the narrative does not leak internal action labels or numeric deltas.
-    if (lines.length >= 10 && hasTimeline && !leaksInternalOps && !leaksScoreDeltas) {
+    // Accept any cached narrative with ≥4 usable lines that doesn't leak internal ops.
+    // The previous requirement for exact timeline headers + 10 lines caused valid narratives
+    // to be rejected, triggering infinite regeneration loops and a permanently-stuck modal.
+    if (lines.length >= 4 && !leaksInternalOps) {
       return { ...base, llm: existing, llmPending: false };
     }
   }

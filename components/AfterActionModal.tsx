@@ -157,47 +157,75 @@ export default function AfterActionModal({
       .slice(0, 8);
   }, [report]);
 
+  // Hard deadline: after this many ms, stop waiting for AI and show whatever we have.
+  const AI_DEADLINE_MS = 20_000;
+  const [aiTimedOut, setAiTimedOut] = useState(false);
+
   useEffect(() => {
     if (!open) return;
     if (!outcome) return;
     const ac = new AbortController();
     const wantAi = llmMode === "ON";
     let cancelled = false;
-    const deadlineMs = wantAi ? 30_000 : 10_000;
-    const t = setTimeout(() => ac.abort(), deadlineMs);
+    setAiTimedOut(false);
+    const startedAt = Date.now();
+
+    const deadlineTimer = wantAi
+      ? setTimeout(() => { if (!cancelled) setAiTimedOut(true); }, AI_DEADLINE_MS)
+      : undefined;
+
+    const fetchReport = async (opts?: { forceLlm?: boolean; waitMs?: number }) => {
+      try {
+        return (await apiResolutionReport(gameId, outcome.turnResolved, {
+          signal: ac.signal,
+          forceLlm: opts?.forceLlm,
+          waitMs: opts?.waitMs,
+        })) as ResolutionReport;
+      } catch (e) {
+        if ((e as Error).name === "AbortError") return null;
+        throw e;
+      }
+    };
+
+    const hasNarrative = (r: ResolutionReport | null) => {
+      if (!r?.llm) return false;
+      const lines = Array.isArray((r.llm as Record<string,unknown>).narrative)
+        ? ((r.llm as Record<string,unknown>).narrative as string[]).filter((s) => typeof s === "string" && s.trim()).length
+        : 0;
+      return lines >= 2;
+    };
 
     void (async () => {
       try {
-        // Single long-poll-ish request (server waits up to ~12s for AI narrative).
-        const first = (await apiResolutionReport(gameId, outcome.turnResolved, {
-          signal: ac.signal,
-          forceLlm: wantAi,
-          waitMs: wantAi ? 12_000 : 0,
-        })) as ResolutionReport;
-        if (cancelled) return;
+        // First fetch — kick off generation, wait up to 8s server-side.
+        const first = await fetchReport({ forceLlm: wantAi, waitMs: wantAi ? 8_000 : 0 });
+        if (cancelled || !first) return;
         setReport(first);
 
-        if (!wantAi) return;
-        const err1 = typeof first?.llmError === "string" ? first.llmError.trim() : "";
+        if (!wantAi || hasNarrative(first)) return;
+        const err1 = typeof first.llmError === "string" ? first.llmError.trim() : "";
         if (err1) return;
-        const llmLines1 = Array.isArray(first?.llm?.narrative)
-          ? first.llm!.narrative!.map((s) => (typeof s === "string" ? s.trim() : "")).filter(Boolean)
-          : [];
-        if (llmLines1.length >= 2) return;
 
-        // One retry after a short pause (covers "generation finished right after the wait window").
-        await new Promise((r) => setTimeout(r, 1400));
-        const second = (await apiResolutionReport(gameId, outcome.turnResolved, { signal: ac.signal, waitMs: 12_000 })) as ResolutionReport;
-        if (cancelled) return;
-        setReport(second);
+        // Poll every 4s until narrative arrives or deadline expires.
+        const POLL_INTERVAL = 4_000;
+        while (!cancelled && Date.now() - startedAt < AI_DEADLINE_MS) {
+          await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+          if (cancelled) return;
+          const next = await fetchReport({ waitMs: 4_000 });
+          if (cancelled || !next) return;
+          setReport(next);
+          if (hasNarrative(next)) return;
+          const errN = typeof next.llmError === "string" ? next.llmError.trim() : "";
+          if (errN) return;
+        }
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
-        setBaseErr((e as Error).message);
+        if (!cancelled) setBaseErr((e as Error).message);
       }
     })();
 
     return () => {
-      clearTimeout(t);
+      if (deadlineTimer) clearTimeout(deadlineTimer);
       cancelled = true;
       ac.abort();
     };
@@ -240,7 +268,8 @@ export default function AfterActionModal({
 
   const aiReady =
     llmMode !== "ON" ||
-    (!!report?.llm && Array.isArray(report.llm.narrative) && report.llm.narrative.filter((x) => typeof x === "string").length >= 2);
+    aiTimedOut ||
+    (!!report?.llm && Array.isArray((report.llm as Record<string,unknown>).narrative) && ((report.llm as Record<string,unknown>).narrative as unknown[]).filter((x) => typeof x === "string").length >= 2);
 
   const loadingAi = llmMode === "ON" && !aiReady && !baseErr;
   const stamp = useMemo(() => {
@@ -306,17 +335,15 @@ export default function AfterActionModal({
             </div>
             {loadingAi ? <div className="mt-3 text-xs font-mono text-white/50">Waiting for AI…</div> : null}
             {baseErr ? <div className="mt-4 text-xs font-mono text-red-300">Report: {baseErr}</div> : null}
-            {!loadingAi && baseErr ? (
-              <div className="mt-4 flex items-center justify-end">
-                <button
-                  type="button"
-                  onClick={() => onClose()}
-                  className="rounded border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-white/80 hover:bg-white/10"
-                >
-                  Continue anyway
-                </button>
-              </div>
-            ) : null}
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={() => { setAiTimedOut(true); }}
+                className="rounded border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-white/80 hover:bg-white/10"
+              >
+                {baseErr ? "Continue anyway" : "Skip — show results"}
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -371,7 +398,6 @@ export default function AfterActionModal({
                 if (hasCritical && !ackCritical) return;
                 onClose();
               }}
-              disabled={!aiReady}
               className="rounded border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-mono uppercase tracking-wider text-white/80 hover:bg-white/10"
             >
               Continue
