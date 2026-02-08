@@ -2,6 +2,7 @@ import { prisma } from "./client";
 import {
   buildCountryProfile,
   PlayerActionSchema,
+  type ActorId,
   type GameSnapshot,
   type PlayerAction,
   type TurnOutcome,
@@ -647,6 +648,29 @@ export async function getSnapshot(gameId: string): Promise<GameSnapshot> {
     // IMPORTANT: never block the snapshot endpoint on LLM work.
     // Hydration runs in the background and will be visible on the next poll.
     void hydrateSnapshotWithLlmIfNeeded({ gameId, world, snapshot }).catch(() => {});
+  }
+
+  // Backfill diplomacy stance from live world-state actors so existing games
+  // reflect actual relationship scores instead of stale stored values.
+  if (snapshot.diplomacy?.nations?.length) {
+    const world = game.worldState as unknown as WorldState;
+    for (const nation of snapshot.diplomacy.nations) {
+      const actor = world.actors?.[nation.id as ActorId];
+      if (!actor) continue;
+      const postureBonus = actor.postureTowardPlayer === "friendly" ? 15 : actor.postureTowardPlayer === "hostile" ? -15 : 0;
+      nation.stance = Math.max(0, Math.min(100, Math.round(
+        actor.trust * 0.5 +
+        actor.allianceCommitmentStrength * 0.2 +
+        (100 - actor.willingnessToEscalate) * 0.15 +
+        50 * 0.15 +
+        postureBonus
+      )));
+      nation.posture = actor.postureTowardPlayer;
+      const intentParts = actor.objectives?.map((o: { text: string }) => o.text) ?? [];
+      if (!nation.diplomaticIntent || nation.diplomaticIntent === "Objectives unknown.") {
+        nation.diplomaticIntent = intentParts.join("; ") || "Objectives unknown.";
+      }
+    }
   }
 
   // Note: control-room view is optional; the current UI derives its feed/signals deterministically

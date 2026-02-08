@@ -65,8 +65,15 @@ export async function POST(req: Request) {
             const actor = world.actors[actorKey as keyof typeof world.actors];
             const oldTrust = actor.trust;
             actor.trust = Math.max(0, Math.min(100, actor.trust + trustChange));
-            // Sync local snapshot view
-            snapshot.diplomacy.nations[nationIndex].stance = actor.trust;
+            // Sync local snapshot view with composite stance
+            const postureBonus = actor.postureTowardPlayer === "friendly" ? 15 : actor.postureTowardPlayer === "hostile" ? -15 : 0;
+            snapshot.diplomacy.nations[nationIndex].stance = Math.max(0, Math.min(100, Math.round(
+              actor.trust * 0.5 +
+              actor.allianceCommitmentStrength * 0.2 +
+              (100 - actor.willingnessToEscalate) * 0.15 +
+              50 * 0.15 +
+              postureBonus
+            )));
             worldUpdated = true;
             console.log(`Diplomacy: ${nationId} trust changed ${oldTrust} -> ${actor.trust} (${trustChange})`);
         }

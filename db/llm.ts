@@ -2347,15 +2347,28 @@ export async function llmGenerateDiplomacy(args: {
   const defaultMinisterTitle = (id: ActorId) =>
     id === "US" ? "President" : id === "CHINA" ? "General Secretary" : id === "RUSSIA" ? "President" : id === "EU" ? "High Representative" : "Prime Minister";
 
-  const deterministicNation = (a: ExternalActorState): ForeignPower => ({
-    id: a.id,
-    name: a.name,
-    ministerName: `${defaultMinisterTitle(a.id)} ${a.name.split(" ")[0] ?? a.name}`.slice(0, 60),
-    description: `${a.id.startsWith("REGIONAL") ? "A neighboring power" : "A major global power"} with ${a.postureTowardPlayer} posture.`.slice(0, 300),
-    stance: a.trust,
-    hiddenAgenda: "Maintain leverage and expand influence through pressure, access, and narrative control.".slice(0, 300),
-    chatHistory: [],
-  });
+  const deterministicNation = (a: ExternalActorState): ForeignPower => {
+    const postureBonus = a.postureTowardPlayer === "friendly" ? 15 : a.postureTowardPlayer === "hostile" ? -15 : 0;
+    const compositeStance = Math.max(0, Math.min(100, Math.round(
+      a.trust * 0.5 +
+      a.allianceCommitmentStrength * 0.2 +
+      (100 - a.willingnessToEscalate) * 0.15 +
+      50 * 0.15 +
+      postureBonus
+    )));
+    const intentParts = a.objectives.map((o) => o.text);
+    return {
+      id: a.id,
+      name: a.name,
+      ministerName: `${defaultMinisterTitle(a.id)} ${a.name.split(" ")[0] ?? a.name}`.slice(0, 60),
+      description: `${a.id.startsWith("REGIONAL") ? "A neighboring power" : "A major global power"} with ${a.postureTowardPlayer} posture.`.slice(0, 300),
+      stance: compositeStance,
+      posture: a.postureTowardPlayer,
+      diplomaticIntent: intentParts.join("; ") || "Objectives unknown.",
+      hiddenAgenda: "Maintain leverage and expand influence through pressure, access, and narrative control.".slice(0, 300),
+      chatHistory: [],
+    };
+  };
 
   const getDeterministicDiplomacy = () => ({
     nations: Object.values(args.world.actors).map(deterministicNation),
@@ -2486,9 +2499,22 @@ export async function llmGenerateDiplomacy(args: {
     // Merge with engine state and Deduplicate
     let nations: ForeignPower[] = data.nations.map((n) => {
       const actor = args.world.actors[n.id as keyof typeof args.world.actors];
+      const postureBonus = actor ? (actor.postureTowardPlayer === "friendly" ? 15 : actor.postureTowardPlayer === "hostile" ? -15 : 0) : 0;
+      const compositeStance = actor
+        ? Math.max(0, Math.min(100, Math.round(
+            actor.trust * 0.5 +
+            actor.allianceCommitmentStrength * 0.2 +
+            (100 - actor.willingnessToEscalate) * 0.15 +
+            50 * 0.15 +
+            postureBonus
+          )))
+        : 50;
+      const intentParts = actor ? actor.objectives.map((o) => o.text) : [];
       return {
         ...n,
-        stance: actor ? actor.trust : 50, // Sync stance with engine trust
+        stance: compositeStance,
+        posture: actor ? actor.postureTowardPlayer : ("neutral" as const),
+        diplomaticIntent: intentParts.join("; ") || "Objectives unknown.",
         chatHistory: [],
       };
     });

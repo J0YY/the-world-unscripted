@@ -289,6 +289,8 @@ export type ForeignPower = {
   ministerName: string;
   description: string;
   stance: number; // 0-100
+  posture: Posture;
+  diplomaticIntent: string;
   hiddenAgenda: string;
   avatarId?: string;
   chatHistory?: Array<{ role: "user" | "minister"; text: string; timestamp: number }>;

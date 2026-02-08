@@ -189,12 +189,26 @@ export function buildSnapshot(gameId: string, world: WorldState, status: "ACTIVE
   const baselineDiplomacy = {
     nations: (Object.keys(world.actors) as ActorId[]).map((k) => {
       const a = world.actors[k];
+      // Composite relationship score: 50% trust, 20% alliance, 15% inverse-escalation, 15% posture
+      const postureBonus = a.postureTowardPlayer === "friendly" ? 15 : a.postureTowardPlayer === "hostile" ? -15 : 0;
+      const compositeStance = clamp100(
+        Math.round(
+          a.trust * 0.5 +
+          a.allianceCommitmentStrength * 0.2 +
+          (100 - a.willingnessToEscalate) * 0.15 +
+          50 * 0.15 +
+          postureBonus
+        )
+      );
+      const intentParts = a.objectives.map((o) => o.text);
       return {
         id: a.id,
         name: a.name,
         ministerName: "",
         description: "",
-        stance: a.trust,
+        stance: compositeStance,
+        posture: a.postureTowardPlayer,
+        diplomaticIntent: intentParts.join("; ") || "Objectives unknown.",
         hiddenAgenda: "",
         chatHistory: [] as Array<{ role: "user" | "minister"; text: string; timestamp: number }>,
       };

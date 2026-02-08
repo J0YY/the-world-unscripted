@@ -327,6 +327,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   ];
   US.redLines = ["Direct attack on allied forces", "WMD proliferation signals", "Mass civilian atrocities"];
   US.riskTolerance = 55;
+  US.trust = 62;
   US.sanctionsPolicyStrength = 70;
   US.allianceCommitmentStrength = 75;
 
@@ -338,6 +339,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   ];
   CHINA.redLines = ["Threats to Chinese nationals/assets", "Formal alignment against China"];
   CHINA.riskTolerance = 45;
+  CHINA.trust = 42;
   CHINA.sanctionsPolicyStrength = 35;
 
   const RUSSIA = baseActor("RUSSIA", "Russia");
@@ -347,6 +349,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   ];
   RUSSIA.redLines = ["Hostile basing near Russian interests", "Severe sanction expansion via player cooperation"];
   RUSSIA.riskTolerance = 60;
+  RUSSIA.trust = 35;
   RUSSIA.willingnessToEscalate = 60;
 
   const EU = baseActor("EU", "European Union");
@@ -356,6 +359,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   ];
   EU.redLines = ["Mass repression", "Energy blackmail", "Attack on EU-linked infrastructure"];
   EU.riskTolerance = 40;
+  EU.trust = 58;
   EU.sanctionsPolicyStrength = 65;
   EU.allianceCommitmentStrength = 70;
 
@@ -366,6 +370,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   ];
   regional1.redLines = ["Cross-border insurgent sanctuaries", "Attack on border forces"];
   regional1.riskTolerance = 55;
+  regional1.trust = 45;
   regional1.willingnessToEscalate = 50;
 
   const regional2 = baseActor(template.regionalPowers[1].id, template.regionalPowers[1].name);
@@ -375,6 +380,7 @@ function buildActors(template: ScenarioTemplate): Record<ActorId, ExternalActorS
   ];
   regional2.redLines = ["Foreign basing and intelligence hubs", "Direct strikes on core territory"];
   regional2.riskTolerance = 50;
+  regional2.trust = 48;
   regional2.willingnessToEscalate = 45;
 
   return { US, CHINA, RUSSIA, EU, REGIONAL_1: regional1, REGIONAL_2: regional2 };

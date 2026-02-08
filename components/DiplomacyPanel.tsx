@@ -1,10 +1,24 @@
 "use client";
 
 import { useMemo, useState, useRef, useEffect } from "react";
-import { Send, ArrowLeft, Globe, ShieldAlert, BadgeCheck } from "lucide-react";
+import { Send, ArrowLeft, Globe } from "lucide-react";
 import type { GameSnapshot, ForeignPower } from "@/engine";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiResolutionReport, apiSnapshot } from "@/components/api";
+
+const DIPLOMATIC_INTENTS: Record<string, string> = {
+  US: "Preserve alliance credibility, deter regional aggression, maintain sanctions leverage.",
+  CHINA: "Expand market access and infrastructure influence; protect supply chains; block external intervention precedents.",
+  RUSSIA: "Expand westward influence, increase Black Sea presence, disrupt Western cohesion, secure arms markets.",
+  EU: "Prevent refugee flows and energy shocks; maintain sanctions norms; stabilize neighboring regions.",
+  REGIONAL_1: "Dominate local power balance; control border disputes; contain cross-border instability.",
+  REGIONAL_2: "Secure influence via trade and energy ties; prevent hostile alignment on flanks.",
+};
+
+function getIntent(nation: { id: string; diplomaticIntent?: string; name?: string }): string {
+  if (nation.diplomaticIntent && nation.diplomaticIntent !== "Objectives unknown.") return nation.diplomaticIntent;
+  return DIPLOMATIC_INTENTS[nation.id] ?? "Strategic objectives under assessment.";
+}
 
 export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSnapshot; gameId: string }) {
   const [selectedNationId, setSelectedNationId] = useState<string | null>(null);
@@ -147,8 +161,12 @@ export default function DiplomacyPanel({ snapshot, gameId }: { snapshot: GameSna
                     <span className="text-sm font-semibold text-[var(--ds-gray-1000)]">{nation.name}</span>
                     <StanceBadge stance={nation.stance} />
                   </div>
-                  <div className="text-xs text-[var(--ds-gray-900)] font-mono mb-2">
+                  <div className="text-xs text-[var(--ds-gray-900)] font-mono mb-1">
                     {nation.ministerName}
+                  </div>
+                  <div className="text-[10px] text-[var(--ds-amber-700,#b45309)] italic mb-1">
+                    <span className="font-semibold not-italic text-[var(--ds-gray-600)] uppercase tracking-wider">Intent: </span>
+                    {getIntent(nation)}
                   </div>
                   <div className="text-[10px] text-[var(--ds-gray-600)] line-clamp-2">
                     {nation.description}
@@ -199,10 +217,19 @@ function StanceBadge({ stance }: { stance: number }) {
 
   let color = "bg-gray-100 text-gray-600 border-gray-200";
   let label = "Neutral";
-  if (target < 30) {
+  if (target <= 25) {
     color = "bg-red-950/20 text-red-400 border-red-900/30";
     label = "Hostile";
-  } else if (target > 70) {
+  } else if (target <= 40) {
+    color = "bg-orange-950/20 text-orange-400 border-orange-900/30";
+    label = "Wary";
+  } else if (target <= 60) {
+    color = "bg-gray-100 text-gray-600 border-gray-200";
+    label = "Neutral";
+  } else if (target <= 75) {
+    color = "bg-sky-950/20 text-sky-400 border-sky-900/30";
+    label = "Warm";
+  } else {
     color = "bg-emerald-950/20 text-emerald-400 border-emerald-900/30";
     label = "Ally";
   }
@@ -284,9 +311,15 @@ function NationChat({
         <button onClick={onBack} className="p-1 hover:bg-[var(--ds-gray-alpha-200)] rounded">
           <ArrowLeft className="w-4 h-4 text-[var(--ds-gray-900)]" />
         </button>
-        <div>
-          <div className="text-xs font-bold text-[var(--ds-gray-1000)]">{nation.ministerName}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="text-xs font-bold text-[var(--ds-gray-1000)]">{nation.ministerName}</div>
+            <StanceBadge stance={nation.stance} />
+          </div>
           <div className="text-[10px] text-[var(--ds-gray-500)] font-mono">{nation.name}</div>
+          <div className="text-[9px] text-[var(--ds-amber-700,#b45309)] italic mt-0.5 truncate">
+            {getIntent(nation)}
+          </div>
         </div>
       </div>
 
