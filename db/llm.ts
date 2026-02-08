@@ -26,7 +26,7 @@ const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 // ---------------------------------------------------------------------------
-// Neocortex — Virtual Assistants — COMMENTED OUT
+// Neocortex — Virtual Assistants
 // ---------------------------------------------------------------------------
 // We originally developed and tested with Neocortex Virtual Assistants,
 // a platform for deploying intelligent assistants that understand context
