@@ -18,16 +18,16 @@ function useSplitFlapAudio() {
 }
 
 export function SplitFlapAudioProvider({ children }: { children: React.ReactNode }) {
-  const [isMuted, setIsMuted] = useState(() => {
+  const [isMuted, setIsMuted] = useState(true);
+
+  useEffect(() => {
     try {
       const raw = window.localStorage.getItem("twuo_audio_muted");
-      if (raw === "0") return false;
-      if (raw === "1") return true;
+      if (raw === "0") setIsMuted(false);
     } catch {
       // ignore
     }
-    return true;
-  });
+  }, []);
   const audioContextRef = useRef<AudioContext | null>(null);
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const trackIdxRef = useRef(0);

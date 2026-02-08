@@ -13,6 +13,8 @@ import {
   llmGenerateDiplomacy,
   llmGenerateBriefingSlim,
   llmGenerateResolution,
+  llmGenerateResolutionFast,
+  llmGenerateResolutionAnalysis,
   llmGenerateWorldGenScenario,
   llmGenerateTurnEventsOnly,
   llmMode,
@@ -1104,7 +1106,7 @@ export async function getResolutionReport(
   if (!inflight.has(key)) {
     const p = (async () => {
       try {
-        const llm = await llmGenerateResolution({
+        const commonArgs = {
           turnNumber,
           directive: row.playerDirective ?? undefined,
           translatedActions,
@@ -1113,15 +1115,18 @@ export async function getResolutionReport(
           threats,
           worldBefore: beforeWorld,
           worldAfter: afterWorld,
-        });
+        };
+
+        // Phase 1: FAST Brief (Headline + Narrative) - Unblocks the UI immediately.
+        const brief = await llmGenerateResolutionFast(commonArgs);
 
         await prisma.turnLog.update({
           where: { id: row.id },
           data: {
             llmArtifacts: {
               ...(artifacts && typeof artifacts === "object" ? artifacts : {}),
-              resolution: llm.data,
-              resolutionRaw: llm.llmRaw,
+              resolution: brief.data,
+              resolutionRaw: brief.llmRaw,
               resolutionError: null,
               resolutionErrorAt: null,
               beforeSnapshotTurn: beforeSnap.turn,
@@ -1129,6 +1134,35 @@ export async function getResolutionReport(
             } as unknown as object,
           },
         });
+
+        // Phase 2: SLOW Analysis (Impact, Perceptions, Next Moves) - Fills in the details.
+        // We perform this largely detached so the initial 'inflight' promise resolves quickly.
+        void (async () => {
+          try {
+            const analysis = await llmGenerateResolutionAnalysis({
+              ...commonArgs,
+              narrative: brief.data.narrative,
+            });
+
+            const freshLog = await prisma.turnLog.findUnique({ where: { id: row.id } });
+            const freshArts = (freshLog?.llmArtifacts as unknown as Record<string, unknown> | null) ?? {};
+            const freshRes = (freshArts.resolution as unknown as object) ?? {};
+
+            await prisma.turnLog.update({
+              where: { id: row.id },
+              data: {
+                llmArtifacts: {
+                  ...freshArts,
+                  resolution: { ...freshRes, ...analysis.data },
+                } as unknown as object,
+              },
+            });
+          } catch (e) {
+             // If analysis fails, we just don't have the deep data. 
+             // We can log it but no need to fail the turn.
+             console.error("Background analysis failed", e);
+          }
+        })();
       } catch (e) {
         // Persist the error so the UI can surface what's wrong.
         try {

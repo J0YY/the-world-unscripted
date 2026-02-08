@@ -286,7 +286,8 @@ export const LlmResolutionSchema = z.object({
       }),
     )
     .min(2)
-    .max(8),
+    .max(8)
+    .optional(),
   perceptions: z
     .array(
       z.object({
@@ -296,9 +297,10 @@ export const LlmResolutionSchema = z.object({
       }),
     )
     .min(2)
-    .max(8),
-  threats: z.array(z.string().min(10).max(180)).min(2).max(7),
-  nextMoves: z.array(z.string().min(10).max(200)).min(2).max(6),
+    .max(8)
+    .optional(),
+  threats: z.array(z.string().min(10).max(180)).min(2).max(7).optional(),
+  nextMoves: z.array(z.string().min(10).max(200)).min(2).max(6).optional(),
 });
 
 export const LlmWorldGenScenarioSchema = z.object({

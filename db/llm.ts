@@ -1689,6 +1689,361 @@ export async function llmGenerateResolution(args: {
   throw lastErr instanceof Error ? lastErr : new Error("LLM resolution failed");
 }
 
+export async function llmGenerateResolutionFast(args: {
+  turnNumber: number;
+  directive?: string;
+  translatedActions: Array<{ kind: string; summary: string }>;
+  deltas: Array<{ label: string; before: number; after: number; delta: number }>;
+  actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
+  threats: string[];
+  worldBefore: WorldState;
+  worldAfter: WorldState;
+}): Promise<{ data: Pick<z.infer<typeof LlmResolutionSchema>, "headline" | "narrative">; llmRaw: unknown }> {
+  // --- Deduped context building (same as full resolution) ---
+  const extractCoalitionPartners = (directive: string): string[] => {
+    const d = String(directive || "");
+    const out: string[] = [];
+    const grab = (m: RegExpMatchArray | null) => {
+      if (!m?.[1]) return;
+      const raw = String(m[1]).trim();
+      // Split on common separators, keep plausible country/actor phrases.
+      const parts = raw.split(/,|;|\/|&|\band\b/gi).map((s) => s.trim()).filter(Boolean).slice(0, 3);
+      for (const p of parts) {
+        let cleaned = p.replace(/^the\s+/i, "").replace(/[.]+$/g, "").trim();
+        cleaned = cleaned.replace(/\s+in\s+(southwest|south|central|southeast|north|east|west)\s+asia\b/i, "").trim();
+        cleaned = cleaned.replace(/\s+in\s+(europe|africa|asia|the middle east|middle east|latin america)\b/i, "").trim();
+        if (!cleaned) continue;
+        if (cleaned.length > 48) continue;
+        out.push(cleaned);
+      }
+    };
+    grab(d.match(/\bin conjunction with\s+([^.\n]+)/i));
+    grab(d.match(/\balongside\s+([^.\n]+)/i));
+    grab(d.match(/\bwith support from\s+([^.\n]+)/i));
+    grab(d.match(/\bform an alliance bloc with\s+([^.\n]+)/i));
+    grab(d.match(/\balliance bloc with\s+([^.\n]+)/i));
+    grab(d.match(/\bform an alliance with\s+([^.\n]+)/i));
+    grab(d.match(/\bform alliance with\s+([^.\n]+)/i));
+    grab(d.match(/\balliance with\s+([^.\n]+)/i));
+    grab(d.match(/\bcoalition with\s+([^.\n]+)/i));
+    return Array.from(new Set(out)).slice(0, 3);
+  };
+  const coalitionPartners = args.directive ? extractCoalitionPartners(args.directive) : [];
+
+  const extractDirectiveIntents = (directive: string) => {
+    const d = String(directive || "").trim();
+    if (!d) return [];
+    const parts = d.split(/\n|;|,|\band then\b|\bthen\b/i).map((s) => s.trim()).filter(Boolean);
+    const picked: string[] = [];
+    for (const p of parts) {
+      if (picked.length >= 4) break;
+      picked.push(p.length > 140 ? p.slice(0, 140) : p);
+    }
+    return picked.length ? picked : [d.slice(0, 140)];
+  };
+  const directiveIntents = args.directive ? extractDirectiveIntents(args.directive) : [];
+
+  const actionsForLlm = args.translatedActions.map((a) => a.summary).slice(0, 6);
+
+  const deltaMagnitude = (d: number): "tiny" | "small" | "medium" | "large" => {
+    const a = Math.abs(d);
+    if (a >= 12) return "large";
+    if (a >= 7) return "medium";
+    if (a >= 3) return "small";
+    return "tiny";
+  };
+  const deltasQual = args.deltas
+    .map((d) => ({
+      label: d.label,
+      direction: d.delta > 0 ? "up" : d.delta < 0 ? "down" : "flat",
+      magnitude: deltaMagnitude(d.delta),
+    }))
+    .filter((d) => d.direction !== "flat")
+    .slice(0, 8);
+
+  const actorShiftsQual = args.actorShifts.slice(0, 6).map((s) => ({
+    actor: s.actor,
+    posture: s.posture,
+    trustShift: s.trustDelta > 0 ? "up" : s.trustDelta < 0 ? "down" : "flat",
+    escalationShift: s.escalationDelta > 0 ? "up" : s.escalationDelta < 0 ? "down" : "flat",
+  }));
+
+  const ctxBefore = summarizeWorldForLlm(args.worldBefore);
+  const ctxAfter = summarizeWorldForLlm(args.worldAfter);
+  const worldCompact = {
+    player: ctxAfter.player,
+    global: ctxAfter.global,
+    conflicts: Array.isArray(ctxAfter.conflicts) ? ctxAfter.conflicts.slice(0, 3) : [],
+    actors: Array.isArray(ctxAfter.actors) ? ctxAfter.actors.slice(0, 8).map((a) => ({ name: a.name, posture: a.posture, trust: a.trust })) : [],
+    before: { global: ctxBefore.global, player: { economy: ctxBefore.player.economy, politics: ctxBefore.player.politics } },
+  };
+  // --- End context building ---
+
+  const system = [
+    "You write the end-of-turn resolution briefing for a geopolitical simulation.",
+    "Return STRICT JSON ONLY. No markdown, no backticks, no commentary.",
+    "Write like a classified after-action memo: specific, operational, grounded. No fantasy.",
+    "PRIMARY OBJECTIVE: respond to the PLAYER_DIRECTIVE as if it were pasted into ChatGPT, but in-world and after-action (state what happened, with concrete details).",
+    "The first 3 narrative lines must explicitly reference the directive's concrete asks (names, offers, requests) and say what happened for each.",
+    "You MUST cover every item in DIRECTIVE_INTENTS somewhere in the narrative (verbatim or close paraphrase).",
+    "Do NOT reveal internal raw state dumps. No 'LIMITED_STRIKE', no 'MOBILIZE'.",
+    "Do NOT mention scores, indices, deltas, or any numeric rating changes.",
+    "Describe concrete actions (what moved, what was hit, what was announced).",
+    "Narrative MUST include forward-looking second-order impacts over the next 6 months.",
+    "Formatting hard rule: make the FINAL 4 narrative array entries start with strictly these labels:",
+    "- NEXT 72 HOURS:",
+    "- 2–4 WEEKS:",
+    "- 2–3 MONTHS:",
+    "- 4–6 MONTHS:",
+    "Minimum narrative length: 10 lines. Maximum: 18 lines.",
+  ].join("\n");
+
+  const user = [
+    `TURN_RESOLVED: ${args.turnNumber}`,
+    "",
+    "PLAYER_DIRECTIVE (may be empty):",
+    args.directive?.trim() ? args.directive.trim() : "(none)",
+    "",
+    "COALITION_PARTNERS (if any; treat as real actors involved this turn):",
+    JSON.stringify(coalitionPartners, null, 2),
+    "",
+    "DIRECTIVE_INTENTS (must be explicitly addressed):",
+    JSON.stringify(directiveIntents, null, 2),
+    "",
+    "ENGINE_ACTION_SUMMARIES (hidden grounding only; do NOT echo verbatim; directive is primary):",
+    JSON.stringify(actionsForLlm, null, 2),
+    "",
+    "WORLD_DELTAS_QUALITATIVE (hidden guidance):",
+    JSON.stringify(deltasQual, null, 2),
+    "",
+    "ACTOR_SHIFTS (perceptions):",
+    JSON.stringify(actorShiftsQual, null, 2),
+    "",
+    "TOP_THREATS (derived):",
+    JSON.stringify(args.threats, null, 2),
+    "",
+    "WORLD_COMPACT (qualitative summary):",
+    JSON.stringify(worldCompact, null, 2),
+    "",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        headline: "string",
+        narrative: ["string"],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const validate = (obj: unknown) => {
+    // Only validate the fields we asked for.
+    if (typeof obj !== "object" || obj === null) throw new Error("Result is not an object");
+    const o = obj as Record<string, unknown>;
+    const headline = String(o.headline || "").trim().slice(0, 160);
+    const narrativeArr = Array.isArray(o.narrative) ? o.narrative.filter(x => typeof x === "string").map(s => String(s).slice(0, 220)) : [];
+    
+    // Reuse scrubbing logic
+    const scrubLine = (s: string) => {
+      let out = s.trim();
+      if (out.startsWith("NEXT 72 HOURS:") || out.startsWith("2–4 WEEKS:") || out.startsWith("2–3 MONTHS:") || out.startsWith("4–6 MONTHS:")) return out;
+      out = out.replace(/\b(LIMITED_STRIKE|FULL_INVASION|MOBILIZE|PROXY_SUPPORT|ARMS_PURCHASE|SURVEILLANCE|COUNTERINTEL|COVERT_OP)\b/g, "");
+      out = out.replace(/\bintensity\s*\d+\b/gi, "");
+      out = out.replace(/\(\s*[+-]?\d+[^)]*\)/g, "").trim();
+      out = out.replace(/\s[+-]\d{1,3}\b/g, "").trim();
+      out = out.replace(/\b\d{1,3}\s*\/\s*100\b/g, "").trim();
+      out = out.replace(/\s{2,}/g, " ").trim();
+      return out;
+    };
+    const narrative = narrativeArr.map(s => scrubLine(s)).filter(s => s.length >= 8).slice(0, 18);
+
+    const hasTimeline =
+      narrative.some((s) => s.startsWith("NEXT 72 HOURS:")) &&
+      narrative.some((s) => s.startsWith("2–4 WEEKS:")) &&
+      narrative.some((s) => s.startsWith("2–3 MONTHS:")) &&
+      narrative.some((s) => s.startsWith("4–6 MONTHS:"));
+    if (!hasTimeline) throw new Error("Narrative missing time blocks.");
+    if (narrative.length < 10) throw new Error("Narrative too short.");
+
+    return { headline, narrative };
+  };
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const extra = attempt === 0 ? "" : ["", "REPAIR MODE: previous response failed validation. Return ONLY valid JSON."].join("\n");
+      const out = await chatJson({
+        system: system + extra,
+        user,
+        schemaName: "LlmResolutionFast",
+        validate,
+        temperature: attempt === 0 ? 0.35 : 0.2,
+      });
+      return { data: out.data, llmRaw: out.raw };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM brief failed");
+}
+
+
+export async function llmGenerateResolutionAnalysis(args: {
+  turnNumber: number;
+  directive?: string;
+  translatedActions: Array<{ kind: string; summary: string }>;
+  deltas: Array<{ label: string; before: number; after: number; delta: number }>;
+  actorShifts: Array<{ actor: string; posture: string; trustDelta: number; escalationDelta: number }>;
+  threats: string[];
+  worldBefore: WorldState;
+  worldAfter: WorldState;
+  narrative: string[];
+}): Promise<{ data: Pick<z.infer<typeof LlmResolutionSchema>, "directiveImpact" | "perceptions" | "threats" | "nextMoves">; llmRaw: unknown }> {
+  // --- Deduped context building ---
+  const extractDirectiveIntents = (directive: string) => {
+    const d = String(directive || "").trim();
+    if (!d) return [];
+    const parts = d.split(/\n|;|,|\band then\b|\bthen\b/i).map((s) => s.trim()).filter(Boolean);
+    const picked: string[] = [];
+    for (const p of parts) { if (picked.length >= 4) break; picked.push(p.length > 140 ? p.slice(0, 140) : p); }
+    return picked.length ? picked : [d.slice(0, 140)];
+  };
+  const directiveIntents = args.directive ? extractDirectiveIntents(args.directive) : [];
+  const actionsForLlm = args.translatedActions.map((a) => a.summary).slice(0, 6);
+  const deltaMagnitude = (d: number): "tiny" | "small" | "medium" | "large" => {
+    const a = Math.abs(d); return a >= 12 ? "large" : a >= 7 ? "medium" : a >= 3 ? "small" : "tiny";
+  };
+  const deltasQual = args.deltas.map((d) => ({
+    label: d.label, direction: d.delta > 0 ? "up" : d.delta < 0 ? "down" : "flat", magnitude: deltaMagnitude(d.delta),
+  })).filter((d) => d.direction !== "flat").slice(0, 8);
+  const actorShiftsQual = args.actorShifts.slice(0, 6).map((s) => ({
+    actor: s.actor, posture: s.posture, trustShift: s.trustDelta > 0 ? "up" : s.trustDelta < 0 ? "down" : "flat", escalationShift: s.escalationDelta > 0 ? "up" : s.escalationDelta < 0 ? "down" : "flat",
+  }));
+  const ctxBefore = summarizeWorldForLlm(args.worldBefore);
+  const ctxAfter = summarizeWorldForLlm(args.worldAfter);
+  const worldCompact = {
+    player: ctxAfter.player, global: ctxAfter.global, conflicts: Array.isArray(ctxAfter.conflicts) ? ctxAfter.conflicts.slice(0, 3) : [],
+    actors: Array.isArray(ctxAfter.actors) ? ctxAfter.actors.slice(0, 8).map((a) => ({ name: a.name, posture: a.posture, trust: a.trust })) : [],
+    before: { global: ctxBefore.global, player: { economy: ctxBefore.player.economy, politics: ctxBefore.player.politics } },
+  };
+  // --- End context ---
+
+  const system = [
+    "You analyze the aftermath of a geopolitical turn.",
+    "Return STRICT JSON ONLY. No markdown.",
+    "Your output will fill the 'Analysis' tab. It must be consistent with the provided NARRATIVE.",
+    "Analyze specific impacts of the player's directive, perceptions of foreign actors, and recommend next moves.",
+    "Hard constraint: perceptions must be 2–8 items. Each perceptions[].read MUST be <= 160 characters.",
+    "Hard constraint: directiveImpact must be 2–8 items.",
+  ].join("\n");
+
+  const user = [
+    `TURN_RESOLVED: ${args.turnNumber}`,
+    "",
+    "PLAYER_DIRECTIVE:",
+    args.directive?.trim() ? args.directive.trim() : "(none)",
+    "",
+    "ESTABLISHED_NARRATIVE (Ground Truth - do not contradict):",
+    args.narrative.join("\n"),
+    "",
+    "DIRECTIVE_INTENTS:",
+    JSON.stringify(directiveIntents, null, 2),
+    "",
+    "ENGINE_ACTION_SUMMARIES:",
+    JSON.stringify(actionsForLlm, null, 2),
+    "",
+    "WORLD_DELTAS_QUALITATIVE:",
+    JSON.stringify(deltasQual, null, 2),
+    "",
+    "ACTOR_SHIFTS:",
+    JSON.stringify(actorShiftsQual, null, 2),
+    "",
+    "WORLD_COMPACT:",
+    JSON.stringify(worldCompact, null, 2),
+    "",
+    "Return JSON matching this shape:",
+    JSON.stringify(
+      {
+        directiveImpact: [
+          { directiveFragment: "string", translatedOps: ["string"], observedEffects: ["string"] },
+        ],
+        perceptions: [{ actor: "string", posture: "hostile|neutral|friendly", read: "string" }],
+        threats: ["string"],
+        nextMoves: ["string"],
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+
+  const validate = (obj: unknown) => {
+    if (typeof obj !== "object" || obj === null) throw new Error("Result is not an object");
+    const o = obj as Record<string, unknown>;
+    const safeStr = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    const safeStrArr = (v: unknown, maxItems: number, maxLen: number) =>
+      Array.isArray(v) ? v.filter((x) => typeof x === "string").map((s) => String(s).trim().slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
+
+    const diRaw = Array.isArray(o.directiveImpact) ? o.directiveImpact.slice(0, 8) : [];
+    const directiveImpact = diRaw
+      .map((it) => {
+        if (typeof it !== "object" || it === null) return null;
+        const r = it as Record<string, unknown>;
+        const directiveFragment = safeStr(r.directiveFragment, 120);
+        const translatedOps = safeStrArr(r.translatedOps, 4, 140);
+        const observedEffects = safeStrArr(r.observedEffects, 5, 160);
+        if (!directiveFragment || observedEffects.length === 0) return null;
+        return { directiveFragment, translatedOps, observedEffects };
+      })
+      .filter(Boolean) as Array<{ directiveFragment: string; translatedOps: string[]; observedEffects: string[] }>;
+
+    const perceptionsRaw = Array.isArray(o.perceptions) ? o.perceptions.slice(0, 8) : [];
+    const perceptions = perceptionsRaw
+      .map((p) => {
+        if (typeof p !== "object" || p === null) return null;
+        const pr = p as Record<string, unknown>;
+        const actor = safeStr(pr.actor, 40) || "—";
+        const posture = safeStr(pr.posture, 12).toLowerCase();
+        const read = safeStr(pr.read, 160);
+        const okPosture = posture === "hostile" || posture === "neutral" || posture === "friendly" ? posture : "neutral";
+        if (!read) return null;
+        return { actor, posture: okPosture, read };
+      })
+      .filter(Boolean) as Array<{ actor: string; posture: "hostile" | "neutral" | "friendly"; read: string }>;
+
+    // We can reuse the padding logic or just keep it minimal.
+    // Given the constraints, I'll rely on the schema to handle missing fields if I passed it into LlmResolutionSchema,
+    // but here I want strict outputs. I'll just return the raw valid objects and let the UI safe access them.
+    // Actually, LlmResolutionSchema expects at least 2 items.
+    
+    // Quick padding
+    while (directiveImpact.length < 2) {
+      directiveImpact.push({ directiveFragment: "General execution", translatedOps: [], observedEffects: ["Orders carried out."] });
+    }
+    while (perceptions.length < 2) {
+      perceptions.push({ actor: "Global Community", posture: "neutral", read: "Observers are watching closely." });
+    }
+
+    const threats = safeStrArr(o.threats, 7, 180);
+    while (threats.length < 2) threats.push("General instability");
+
+    const nextMoves = safeStrArr(o.nextMoves, 6, 200);
+    while (nextMoves.length < 2) nextMoves.push("Consolidate position.");
+
+    return { directiveImpact, perceptions, threats, nextMoves };
+  };
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const out = await chatJson({
+        system, user, schemaName: "LlmResolutionAnalysis", validate, temperature: 0.3,
+      });
+      return { data: out.data, llmRaw: out.raw };
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("LLM analysis failed");
+}
+
 export async function llmGenerateWorldGenScenario(args: {
   seedHint: string;
   candidateLocations: Array<{ lat: number; lon: number }>;
