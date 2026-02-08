@@ -1,6 +1,6 @@
 # The Unscripted World Order (MVP)
 
-A deterministic, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer, using **Mistral AI,** is used for narrative synthesis and directive parsing, and is what makes this game possible.
+An LLM-enabled, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer, using **Mistral AI,** is used for narrative synthesis and directive parsing, and is what makes this game possible.
 
 ![gif1](https://github.com/user-attachments/assets/9f20dbb2-8328-43d9-bf84-e3a168704d8b)
 
@@ -32,7 +32,7 @@ Reset state:
 
 ### 1) Simulation engine (`engine/`)
 
-**Pure TypeScript**, deterministic when seeded. The engine owns canonical state and produces **player-facing snapshots** with noise.
+**Pure TypeScript. The engine owns canonical state and produces **player-facing snapshots** with noise.
 
 - **True state**: `WorldState`
 - **Player view**: `GameSnapshot` → `PlayerViewState` (confidence, partial visibility)
