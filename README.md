@@ -1,19 +1,8 @@
 # The Unscripted World Order (MVP)
 
-A **serious, grounded** turn-based geopolitical simulation. You are President of a fictional country operating inside the **real** international system (UN/IMF-style pressure, sanctions logic, alliance dynamics). You never see truth—only **estimates + confidence**.
+A deterministic, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer is optional and is used strictly for narrative synthesis and directive parsing — not for state transitions.
 
-Failure is explicit:
-- **Domestic ouster**: legitimacy collapse + elite fracture / unrest / loyalty failure
-- **Loss of sovereignty**: annexation/protectorate dynamics (capital control / sovereignty integrity collapse)
-
-War is permitted and can be attractive—but it carries compounding systemic costs.
-
-## Run locally
-
-### Prereqs
-- Node 20+
-
-### Commands
+## Local dev (Node 20+)
 
 ```bash
 npm install
@@ -23,52 +12,53 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-### Reset
-- Use the **Reset Simulation** button on the Start screen (deletes all local games + turn logs).
-- Or call `POST /api/game/reset`.
+Reset state:
+- UI: **Reset Simulation** on `/`
+- API: `POST /api/game/reset`
 
-## Architecture (3 layers)
+## System architecture (engine → persistence → UI)
 
-### A) Simulation Engine (UI-agnostic)
-- Location: `engine/`
-- Pure TypeScript, deterministic when seeded
-- Owns:
-  - **True** `WorldState`
-  - Player-facing **noisy** `GameSnapshot` (`PlayerViewState` with confidence)
-  - Turn pipeline: briefing → events → actions → resolution → delayed consequences → drift → failure detection
+### 1) Simulation engine (`engine/`)
+
+**Pure TypeScript**, deterministic when seeded. The engine owns canonical state and produces **player-facing snapshots** with noise.
+
+- **True state**: `WorldState`
+- **Player view**: `GameSnapshot` → `PlayerViewState` (confidence, partial visibility)
+- Turn pipeline:
+  - briefing → events → actions → resolution → delayed consequences → drift → failure detection
 
 Key entrypoints:
 - `engine/createNewGameWorld(seed)`
 - `engine/submitTurnAndAdvance(gameId, world, actions)`
 
-### B) Persistence layer (SQLite via Prisma)
-- Location: `db/`
-- Prisma schema: `db/prisma/schema.prisma`
-- Stores:
-  - full **true state per turn** (`TurnLog.worldState`)
-  - last **player snapshot** (`Game.lastPlayerSnapshot`)
-  - briefing/events/actions/outcome log
+### 2) Persistence (`db/`, SQLite via Prisma)
 
-### C) UI layer (Next.js App Router)
-- Location: `app/` + `components/`
-- Renders **player snapshots only** (never true state)
-- Screens:
-  - Start (`/`)
-  - Country Profile (`/country`)
-  - Main Control Room (`/game`)
-  - Resolution (`/resolution`)
-  - Failure (`/failure`)
+The database stores **complete, immutable per-turn state**, plus the latest player snapshot for fast UI hydration.
 
-## Where to change content
+- Schema: `db/prisma/schema.prisma`
+- Tables:
+  - `Game`: latest `worldState` + `lastPlayerSnapshot`
+  - `TurnLog`: full **before/after world state**, actions, consequences, artifacts
+
+### 3) UI (Next.js App Router)
+
+UI strictly renders **player snapshots** and never reads true state directly.
+
+Routes:
+- `/` start
+- `/country` profile
+- `/game` control room
+- `/resolution` after-action memo
+- `/failure` failure state
+
+## Core content surfaces
 
 - **Incoming events**: `engine/events.ts`
-- **Briefing tone/content**: `engine/briefing.ts`
-- **Action effects + war logic**: `engine/resolve.ts` and `engine/drift.ts`
+- **Briefing tone & structure**: `engine/briefing.ts`
+- **Action effects + war logic**: `engine/resolve.ts`, `engine/drift.ts`
 - **Failure thresholds**: `engine/failure.ts`
 
-## Debug: export true state (server-only, behind a flag)
-
-Set an env var when running dev:
+## Debug: export full true state (server-only)
 
 ```bash
 ENABLE_DEBUG_EXPORT=true npm run dev
@@ -77,24 +67,38 @@ ENABLE_DEBUG_EXPORT=true npm run dev
 Then call:
 - `GET /api/game/debug/export?gameId=...`
 
-This returns true world state + full turn history (for debugging / balancing). Do not expose this in production.
+Returns canonical world state + complete turn history for diagnostics/balancing.
 
-## Minimal tests
+## Tests
 
 ```bash
 npm test
 ```
 
-Includes a determinism smoke test to ensure **same seed + same actions** produces identical outcomes.
+Includes a determinism smoke test to guarantee **same seed + same actions** → identical outcomes.
 
-## Optional: LLM mode (dynamic narrative + freeform directives)
+## LLM subsystem (server-only, optional)
 
-This MVP can optionally use an LLM **server-side** to:
-- rewrite each turn’s **briefing + event descriptions** (grounded tone)
-- translate a player **freeform directive** into structured actions (still validated/clamped)
-- optionally inject **one bounded event** per turn (effects are limited and validated)
+The LLM layer is intentionally **thin** and **bounded**. It generates narrative and translates directives; it does **not** mutate world state directly.
 
-Enable it by setting:
+### Provider selection (priority order)
+
+1. **OpenAI** (`OPENAI_API_KEY`) — default for now
+2. **Mistral** (`MISTRAL_API_KEY`) — hackathon target
+3. **Gemini** (`GEMINI_API_KEY`)
+
+### Mistral-first hackathon mode
+
+Set Mistral credentials to enable the Mistral path. OpenAI still takes precedence if configured.
+
+```bash
+export MISTRAL_API_KEY="YOUR_KEY"
+# optional
+export MISTRAL_MODEL="mistral-small-latest"
+npm run dev
+```
+
+### OpenAI (current default)
 
 ```bash
 export OPENAI_API_KEY="YOUR_KEY"
@@ -103,4 +107,22 @@ export OPENAI_MODEL="gpt-4.1-mini"
 npm run dev
 ```
 
-Important: do **not** hardcode keys in code or commit them to git.
+### Gemini (fallback)
+
+```bash
+export GEMINI_API_KEY="YOUR_KEY"
+# optional
+export GEMINI_MODEL="gemini-2.5-flash-lite"
+npm run dev
+```
+
+### LLM usage in this codebase
+
+All LLM calls live in `db/llm.ts` and are structured as **strict JSON** with explicit schema validation in `db/llmSchemas.ts`.
+
+Main flows:
+- **Directive parsing** → structured actions (validated/clamped)
+- **Briefing/event rewrites** → tone + grounding only
+- **Resolution memo** → short narrative synthesis
+
+> IMPORTANT: never hardcode keys or commit secrets.
