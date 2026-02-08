@@ -780,8 +780,27 @@ export async function submitTurn(
   const snapshotAfter = structuredClone(finalOutcome.nextSnapshot) as GameSnapshot;
 
   await prisma.$transaction(async (tx) => {
-    await tx.turnLog.create({
-      data: {
+    await tx.turnLog.upsert({
+      where: { gameId_turnNumber: { gameId, turnNumber: outcome.turnResolved } },
+      update: {
+        briefingText: startBriefingText,
+        incomingEvents: startIncomingEvents as unknown as object,
+        playerActions: actions as unknown as object,
+        playerDirective: playerDirective?.trim() ? playerDirective.trim() : undefined,
+        publicResolution: finalOutcome.publicResolutionText,
+        publicConsequences: finalOutcome.consequences as unknown as object,
+        signalsUnknown: finalOutcome.signalsUnknown as unknown as object,
+        playerSnapshot: { before: snapshotBefore, after: snapshotAfter } as unknown as object,
+        worldState: { before: worldBefore, after: worldAfter } as unknown as object,
+        failure: finalOutcome.failure ? (finalOutcome.failure as unknown as object) : undefined,
+        llmArtifacts:
+          directiveArtifact
+            ? ({
+                directiveParse: directiveArtifact ?? null,
+              } as unknown as object)
+            : undefined,
+      },
+      create: {
         gameId,
         turnNumber: outcome.turnResolved,
         briefingText: startBriefingText,

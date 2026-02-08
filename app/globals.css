@@ -3,26 +3,26 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #000000;
+  --foreground: #ededed;
 
-  /* Vercel Design System Colors (used by ui-testing-twi-main UI) */
-  --ds-background-100: #ffffff;
-  --ds-background-200: #fafafa;
-  --ds-gray-100: #f5f5f5;
-  --ds-gray-200: #e5e5e5;
-  --ds-gray-300: #d4d4d4;
-  --ds-gray-400: #a3a3a3;
+  /* Vercel Design System Colors — dark palette (enforced) */
+  --ds-background-100: #000000;
+  --ds-background-200: #171717;
+  --ds-gray-100: #262626;
+  --ds-gray-200: #333333;
+  --ds-gray-300: #404040;
+  --ds-gray-400: #525252;
   --ds-gray-500: #737373;
-  --ds-gray-600: #525252;
-  --ds-gray-700: #404040;
-  --ds-gray-800: #262626;
-  --ds-gray-900: #737373;
-  --ds-gray-1000: #0a0a0a;
-  --ds-gray-alpha-100: rgba(0, 0, 0, 0.05);
-  --ds-gray-alpha-200: rgba(0, 0, 0, 0.1);
-  --ds-gray-alpha-400: rgba(0, 0, 0, 0.2);
-  --ds-gray-alpha-600: rgba(0, 0, 0, 0.4);
+  --ds-gray-600: #a3a3a3;
+  --ds-gray-700: #d4d4d4;
+  --ds-gray-800: #e5e5e5;
+  --ds-gray-900: #a1a1aa;
+  --ds-gray-1000: #fafafa;
+  --ds-gray-alpha-100: rgba(255, 255, 255, 0.05);
+  --ds-gray-alpha-200: rgba(255, 255, 255, 0.1);
+  --ds-gray-alpha-400: rgba(255, 255, 255, 0.2);
+  --ds-gray-alpha-600: rgba(255, 255, 255, 0.4);
 
   --ds-blue-500: #3b82f6;
   --ds-blue-600: #2563eb;
@@ -40,6 +40,8 @@
 
   --ds-amber-800: #f59e0b;
   --ds-orange-600: #ea580c;
+
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -50,30 +52,6 @@
   --color-gray-alpha-100: var(--ds-gray-alpha-100);
   --color-gray-900: var(--ds-gray-900);
   --color-gray-1000: var(--ds-gray-1000);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #000000;
-    --foreground: #ededed;
-
-    --ds-background-100: #000000;
-    --ds-background-200: #171717;
-    --ds-gray-100: #262626;
-    --ds-gray-200: #333333;
-    --ds-gray-300: #404040;
-    --ds-gray-400: #525252;
-    --ds-gray-500: #737373;
-    --ds-gray-600: #a3a3a3;
-    --ds-gray-700: #d4d4d4;
-    --ds-gray-800: #e5e5e5;
-    --ds-gray-900: #a1a1aa;
-    --ds-gray-1000: #fafafa;
-    --ds-gray-alpha-100: rgba(255, 255, 255, 0.05);
-    --ds-gray-alpha-200: rgba(255, 255, 255, 0.1);
-    --ds-gray-alpha-400: rgba(255, 255, 255, 0.2);
-    --ds-gray-alpha-600: rgba(255, 255, 255, 0.4);
-  }
 }
 
 body {

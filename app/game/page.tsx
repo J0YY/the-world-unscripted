@@ -9,6 +9,7 @@ import GlobalPressureFieldPage from "@/components/gpf/GlobalPressureFieldPage";
 import { PromptConsole } from "@/components/PromptConsole";
 import { getStoredGameId, setLastFailure, setLastOutcome } from "@/components/storage";
 import AfterActionModal from "@/components/AfterActionModal";
+import WarRoomCinematic from "@/components/gpf/WarRoomCinematic";
 
 function needsHydration(s: GameSnapshot | null): boolean {
   if (!s) return false;
@@ -32,6 +33,9 @@ export default function GameControlRoomPage() {
   const [afterActionOutcome, setAfterActionOutcome] = useState<TurnOutcome | null>(null);
   const [afterActionDirective, setAfterActionDirective] = useState<string>("");
   const [alertOpen, setAlertOpen] = useState(false);
+  const [cinematicActive, setCinematicActive] = useState(false);
+  const [cinematicTurn, setCinematicTurn] = useState(1);
+  const cinematicCallbackRef = useRef<(() => void) | null>(null);
   const hydrationPollTokenRef = useRef(0);
   const lastWorldEventsAlertWindowRef = useRef<number | null>(null);
 
@@ -139,13 +143,18 @@ export default function GameControlRoomPage() {
       setLastFailure(outcome.failure);
       router.push("/failure");
     } else {
-      // Advance UI to next snapshot immediately (next turn), and show an after-action modal overlay.
-      setAfterActionOutcome(outcome);
-      setAfterActionDirective(directive.trim());
-      setAfterActionOpen(true);
-
+      // Play the war-room cinematic transition, THEN show after-action modal.
       const next = outcome.nextSnapshot;
-      setSnap(next);
+      setCinematicTurn(next.turn);
+
+      // Wrap the post-cinematic work in a ref so onComplete can call it.
+      cinematicCallbackRef.current = () => {
+        setAfterActionOutcome(outcome);
+        setAfterActionDirective(directive.trim());
+        setAfterActionOpen(true);
+        setSnap(next);
+      };
+      setCinematicActive(true);
 
       // Poll snapshot briefly to pick up hydrated events/briefing (bounded so UI never "hangs").
       if (needsHydration(next)) {
@@ -185,8 +194,21 @@ export default function GameControlRoomPage() {
   if (error) return <Shell title={title}>{error}</Shell>;
   if (!snap) return <Shell title={title}>Loading…</Shell>;
 
+  const handleCinematicComplete = () => {
+    setCinematicActive(false);
+    cinematicCallbackRef.current?.();
+    cinematicCallbackRef.current = null;
+  };
+
   return (
     <>
+      <WarRoomCinematic
+        turn={cinematicTurn}
+        active={cinematicActive}
+        onComplete={handleCinematicComplete}
+        countryName={snap.countryProfile.name}
+      />
+
       <Shell title={title} llmMode={snap.llmMode}>
         <GlobalPressureFieldPage
           snapshot={snap}

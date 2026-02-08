@@ -15,6 +15,8 @@ import SignalsStrip from "./SignalsStrip";
 import BriefingFeed from "./BriefingFeed";
 import TourButton from "./TourButton";
 import IntelChatbot from "./IntelChatbot";
+import IntelTicker from "./IntelTicker";
+import PixelGlobe from "./PixelGlobe";
 import InterrogationRoom from "./InterrogationRoom";
 import DiplomacyPanel from "../DiplomacyPanel";
 import { Info, ScanEye, TrendingUp } from "lucide-react";
@@ -356,6 +358,7 @@ export default function GlobalPressureFieldPage({
         </div>
 
         <div className="flex-1 min-w-0" id="gpf-map">
+          <IntelTicker headlines={derived.briefings.map(b => b.content).filter(Boolean)} />
           <LayerToggle
             mode={mode}
             onModeChange={handleModeChange}
@@ -381,6 +384,7 @@ export default function GlobalPressureFieldPage({
           <div id="gpf-feed">
             <BriefingFeed briefings={derived.briefings} />
           </div>
+          <PixelGlobe className="h-64 md:h-80" />
           {rightSlot}
         </div>
         </div>

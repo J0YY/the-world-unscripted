@@ -194,7 +194,11 @@ export function PromptConsole({
                 type="button"
                 onClick={() => void submit()}
                 disabled={submitting || !directive.trim()}
-                className="inline-flex items-center gap-2 rounded border border-[var(--ds-gray-alpha-200)] bg-[var(--ds-background-100)] px-3 py-2 text-xs font-mono text-[var(--ds-gray-1000)] disabled:opacity-40"
+                className={`inline-flex items-center gap-2 rounded border px-3 py-2 text-xs font-mono transition-colors disabled:opacity-40 ${
+                  directive.trim()
+                    ? "border-green-500/60 bg-green-600/20 text-green-300 hover:bg-green-600/30"
+                    : "border-green-800/30 bg-green-950/20 text-green-600/50"
+                }`}
               >
                 <Send className="h-3.5 w-3.5" />
                 {submitting ? "Submitting…" : "End turn"}

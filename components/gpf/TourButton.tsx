@@ -15,7 +15,7 @@ export default function TourButton() {
           element: "header h1",
           popover: {
             title: "Control Room",
-            description: "Your command center. Monitor global stability, review your country dossier (via the 'i' icon), and direct covert operations.",
+            description: "Your command center. Monitor global stability, review your country dossier (via the <b>i</b> icon), and direct covert operations.",
           },
         },
         {
@@ -36,7 +36,7 @@ export default function TourButton() {
           element: "#gpf-intel",
           popover: {
             title: "Intel & Diplomacy",
-            description: "Toggle between the **Intel Assistant** (for deep analysis) and **Diplomatic Channels** (to chat directly with foreign leaders).",
+            description: "Toggle between the <b>Intel Assistant</b> (for deep analysis) and <b>Diplomatic Channels</b> (to chat directly with foreign leaders). When a captive is available, the <b>INTERROGATE</b> button lets you extract classified intelligence.",
           },
         },
         {
@@ -50,21 +50,21 @@ export default function TourButton() {
           element: "#gpf-map",
           popover: {
             title: "Perception Map",
-            description: "Visualizes pressure intensity and intel coverage. Use the toggles to filter layers (e.g. Political Fog vs. Raw Pressure).",
+            description: "Visualizes pressure intensity and intel coverage. Use the toggles to filter layers. The <b>Signals Strip</b> below shows real-time intelligence intercepts.",
           },
         },
         {
           element: "#gpf-feed",
           popover: {
             title: "The Wire",
-            description: "Real-time headlines and intelligence cables. Watch this for the public reaction to your private moves.",
+            description: "Real-time headlines and intelligence cables. The <b>scrolling ticker</b> below highlights breaking developments. The <b>globe</b> shows a live world overview.",
           },
         },
         {
           element: ".prompt-console",
           popover: {
             title: "Command Deck",
-            description: "Type your orders here in natural language. 'Stabilize the border', 'Bribe the general', or 'Leak the documents'.",
+            description: "Type your orders in natural language. <i>Stabilize the border</i>, <i>Bribe the general</i>, or <i>Leak the documents</i>. Hit the green <b>End turn</b> button when ready. A cinematic transition plays between turns.",
           },
         },
       ],
@@ -79,12 +79,12 @@ export default function TourButton() {
   }, []);
 
   useEffect(() => {
-    const hasSeenTour = localStorage.getItem("world-unscripted-tour-seen-v2");
+    const hasSeenTour = localStorage.getItem("world-unscripted-tour-seen-v4");
     if (!hasSeenTour) {
       // Wait for the game fade-in (approx 2.6s) to finish before starting tour
       const timer = setTimeout(() => {
         startTour();
-        localStorage.setItem("world-unscripted-tour-seen-v2", "true");
+        localStorage.setItem("world-unscripted-tour-seen-v4", "true");
       }, 3000);
       return () => clearTimeout(timer);
     }
