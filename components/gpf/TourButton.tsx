@@ -36,21 +36,21 @@ export default function TourButton() {
           element: "#gpf-intel",
           popover: {
             title: "Intel & Diplomacy",
-            description: "Toggle between the <b>Intel Assistant</b> (for deep analysis) and <b>Diplomatic Channels</b> (to chat directly with foreign leaders). When a captive is available, the <b>INTERROGATE</b> button lets you extract classified intelligence.",
+            description: "Two tabs here. The <b>Intel Assistant</b> answers your questions with deep analysis of the situation. <b>Diplomatic Channels</b> lets you open direct conversations with foreign leaders — threaten, negotiate, or bluff.",
           },
         },
         {
-          element: "#gpf-hotspots",
+          element: "#gpf-intel",
           popover: {
-            title: "Active Hotspots",
-            description: "Geopolitical flashpoints. Resolving these drives the narrative. Ignore them at your peril.",
+            title: "Interrogation",
+            description: "Your intelligence services may capture spies and operatives from rival nations. When a captive is available, an <b>INTERROGATE</b> button appears. Crack them successfully and you earn <b>Clarity points</b> — these sharpen your intelligence estimates and reveal hidden information on the map. Fail, and the opportunity is lost.",
           },
         },
         {
           element: "#gpf-map",
           popover: {
             title: "Perception Map",
-            description: "Visualizes pressure intensity and intel coverage. Use the toggles to filter layers. The <b>Signals Strip</b> below shows real-time intelligence intercepts.",
+            description: "This is <b>not</b> ground truth — it shows <i>perceived</i> pressure based on your intel quality. Every number is an estimate with a confidence level. The <b>Signals Strip</b> below shows raw intelligence intercepts. Better clarity means better data.",
           },
         },
         {
@@ -79,12 +79,12 @@ export default function TourButton() {
   }, []);
 
   useEffect(() => {
-    const hasSeenTour = localStorage.getItem("world-unscripted-tour-seen-v4");
+    const hasSeenTour = localStorage.getItem("world-unscripted-tour-seen-v5");
     if (!hasSeenTour) {
       // Wait for the game fade-in (approx 2.6s) to finish before starting tour
       const timer = setTimeout(() => {
         startTour();
-        localStorage.setItem("world-unscripted-tour-seen-v4", "true");
+        localStorage.setItem("world-unscripted-tour-seen-v5", "true");
       }, 3000);
       return () => clearTimeout(timer);
     }
