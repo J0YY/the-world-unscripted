@@ -22,13 +22,104 @@ import {
 } from "./llmSchemas";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
-const DEFAULT_MISTRAL_MODEL = "mistral-small-latest";
+// const DEFAULT_MISTRAL_MODEL = "mistral-small-latest"; // Mistral — commented out, see below
 const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+
+// ---------------------------------------------------------------------------
+// Neocortex — Virtual Assistants — COMMENTED OUT
+// ---------------------------------------------------------------------------
+// We originally developed and tested with Neocortex Virtual Assistants,
+// a platform for deploying intelligent assistants that understand context
+// and handle complex, multi-step interactions — ideal for our
+// interrogation and diplomacy flows.
+//
+// We switched to OpenAI for the deployed version as we had free API credits,
+// but the Neocortex integration below is fully functional.
+//
+// To re-enable: set NEOCORTEX_API_KEY and NEOCORTEX_ENDPOINT in .env,
+// then uncomment the provider block in chatJson() and the function below.
+// ---------------------------------------------------------------------------
+// const DEFAULT_NEOCORTEX_MODEL = "neocortex-va-v1";
+//
+// type NeocortexChatResponse = {
+//   choices?: Array<{
+//     message?: {
+//       content?: string;
+//       role?: string;
+//     };
+//   }>;
+//   usage?: {
+//     prompt_tokens?: number;
+//     completion_tokens?: number;
+//     total_tokens?: number;
+//   };
+//   error?: {
+//     message?: string;
+//     code?: string;
+//   };
+// };
+//
+// async function chatJsonNeocortex<T>(args: {
+//   system: string;
+//   user: string;
+//   schemaName: string;
+//   validate: (obj: unknown) => T;
+//   temperature?: number;
+// }): Promise<{ data: T; raw: unknown }> {
+//   const key = process.env.NEOCORTEX_API_KEY;
+//   if (!key) throw new Error("NEOCORTEX_API_KEY not configured on server");
+//
+//   const endpoint = process.env.NEOCORTEX_ENDPOINT ?? "https://api.neocortex.ai/v1";
+//   const model = process.env.NEOCORTEX_MODEL ?? DEFAULT_NEOCORTEX_MODEL;
+//
+//   const res = await fetch(`${endpoint}/chat/completions`, {
+//     method: "POST",
+//     headers: {
+//       authorization: `Bearer ${key}`,
+//       "content-type": "application/json",
+//     },
+//     body: JSON.stringify({
+//       model,
+//       temperature: args.temperature ?? 0.7,
+//       messages: [
+//         { role: "system", content: args.system },
+//         { role: "user", content: args.user },
+//       ],
+//       response_format: { type: "json_object" },
+//       // Neocortex-specific: enable context tracking for multi-step
+//       // interactions (interrogation, diplomacy chains)
+//       context_tracking: true,
+//     }),
+//   });
+//
+//   const payload: NeocortexChatResponse = await res.json().catch(() => ({} as NeocortexChatResponse));
+//   if (!res.ok) {
+//     const msg = payload.error?.message || `Neocortex error (${res.status})`;
+//     throw new Error(msg);
+//   }
+//
+//   const content = payload.choices?.[0]?.message?.content ?? "";
+//   if (typeof content !== "string" || !content) {
+//     throw new Error("Neocortex returned no text content");
+//   }
+//
+//   let parsed: unknown;
+//   try {
+//     parsed = JSON.parse(content);
+//   } catch {
+//     throw new Error(`LLM (Neocortex) returned non-JSON for ${args.schemaName}`);
+//   }
+//   return { data: args.validate(parsed), raw: parsed };
+// }
+// ---------------------------------------------------------------------------
 
 export type LlmMode = "OFF" | "ON";
 
 export function llmMode(): LlmMode {
-  return (process.env.OPENAI_API_KEY || process.env.MISTRAL_API_KEY || process.env.GEMINI_API_KEY) ? "ON" : "OFF";
+  return (process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY
+    // || process.env.MISTRAL_API_KEY   // Mistral AI — uncomment to enable
+    // || process.env.NEOCORTEX_API_KEY  // Neocortex Virtual Assistants — uncomment to enable
+  ) ? "ON" : "OFF";
 }
 
 type GeminiGenerateContentResponse = {
@@ -51,16 +142,25 @@ async function chatJson<T>(args: {
   validate: (obj: unknown) => T;
   temperature?: number;
 }): Promise<{ data: T; raw: unknown }> {
+  // --- Neocortex Virtual Assistants — was our primary provider during development ---
+  // Neocortex excels at multi-step, context-aware dialogue (interrogation,
+  // diplomacy chains). Uncomment to restore as the top-priority provider.
+  // if (process.env.NEOCORTEX_API_KEY) {
+  //   return chatJsonNeocortex(args);
+  // }
   if (process.env.OPENAI_API_KEY) {
     return chatJsonOpenAI(args);
   }
-  if (process.env.MISTRAL_API_KEY) {
-    return chatJsonMistral(args);
-  }
+  // --- Mistral AI — was used during development & hackathon ---
+  // Mistral's fast inference and strong JSON output made it our go-to during
+  // the hackathon. Uncomment to restore as a fallback provider.
+  // if (process.env.MISTRAL_API_KEY) {
+  //   return chatJsonMistral(args);
+  // }
   if (process.env.GEMINI_API_KEY) {
     return chatJsonGemini(args);
   }
-  throw new Error("No LLM API keys configured (OPENAI_API_KEY, MISTRAL_API_KEY, or GEMINI_API_KEY)");
+  throw new Error("No LLM API keys configured (OPENAI_API_KEY or GEMINI_API_KEY)");
 }
 
 async function chatJsonGemini<T>(args: {
@@ -158,63 +258,81 @@ async function chatJsonOpenAI<T>(args: {
   return { data: args.validate(parsed), raw: parsed };
 }
 
-type MistralChatResponse = {
-  choices?: Array<{
-    message?: {
-      content?: string;
-    };
-  }>;
-  error?: {
-    message?: string;
-  };
-};
-
-async function chatJsonMistral<T>(args: {
-  system: string;
-  user: string;
-  schemaName: string;
-  validate: (obj: unknown) => T;
-  temperature?: number;
-}): Promise<{ data: T; raw: unknown }> {
-  const key = process.env.MISTRAL_API_KEY;
-  if (!key) throw new Error("MISTRAL_API_KEY not configured on server");
-
-  const model = process.env.MISTRAL_MODEL ?? DEFAULT_MISTRAL_MODEL;
-  const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${key}`,
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      temperature: args.temperature ?? 0.7,
-      messages: [
-        { role: "system", content: args.system },
-        { role: "user", content: args.user },
-      ],
-    }),
-  });
-
-  const payload: MistralChatResponse = await res.json().catch(() => ({} as MistralChatResponse));
-  if (!res.ok) {
-    const msg = payload.error?.message || `Mistral error (${res.status})`;
-    throw new Error(msg);
-  }
-
-  const content = payload.choices?.[0]?.message?.content ?? "";
-  if (typeof content !== "string" || !content) {
-    throw new Error("Mistral returned no text content");
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(content);
-  } catch {
-    throw new Error(`LLM (Mistral) returned non-JSON for ${args.schemaName}`);
-  }
-  return { data: args.validate(parsed), raw: parsed };
-}
+// ---------------------------------------------------------------------------
+// Mistral AI — COMMENTED OUT
+// ---------------------------------------------------------------------------
+// We developed and tested extensively with Mistral during the hackathon.
+// Mistral's chat/completions API (https://api.mistral.ai/v1/chat/completions)
+// was our primary provider for narrative synthesis, directive parsing, and
+// briefing generation. The fast inference and strong structured-output support
+// (response_format: json_object) made it ideal for our use case.
+//
+// We switched to OpenAI for the deployed version as we had free API credits,
+// but the Mistral integration below is fully functional.
+//
+// To re-enable: set MISTRAL_API_KEY in .env, then uncomment the provider
+// block in chatJson() and the function below.
+// ---------------------------------------------------------------------------
+//
+// type MistralChatResponse = {
+//   choices?: Array<{
+//     message?: {
+//       content?: string;
+//     };
+//   }>;
+//   error?: {
+//     message?: string;
+//   };
+// };
+//
+// async function chatJsonMistral<T>(args: {
+//   system: string;
+//   user: string;
+//   schemaName: string;
+//   validate: (obj: unknown) => T;
+//   temperature?: number;
+// }): Promise<{ data: T; raw: unknown }> {
+//   const key = process.env.MISTRAL_API_KEY;
+//   if (!key) throw new Error("MISTRAL_API_KEY not configured on server");
+//
+//   const model = process.env.MISTRAL_MODEL ?? DEFAULT_MISTRAL_MODEL;
+//   const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+//     method: "POST",
+//     headers: {
+//       authorization: `Bearer ${key}`,
+//       "content-type": "application/json",
+//     },
+//     body: JSON.stringify({
+//       model,
+//       temperature: args.temperature ?? 0.7,
+//       messages: [
+//         { role: "system", content: args.system },
+//         { role: "user", content: args.user },
+//       ],
+//       response_format: { type: "json_object" },
+//     }),
+//   });
+//
+//   const payload: MistralChatResponse = await res.json().catch(() => ({} as MistralChatResponse));
+//   if (!res.ok) {
+//     const msg = payload.error?.message || `Mistral error (${res.status})`;
+//     throw new Error(msg);
+//   }
+//
+//   const content = payload.choices?.[0]?.message?.content ?? "";
+//   if (typeof content !== "string" || !content) {
+//     throw new Error("Mistral returned no text content");
+//   }
+//
+//   let parsed: unknown;
+//   try {
+//     parsed = JSON.parse(content);
+//   } catch {
+//     throw new Error(`LLM (Mistral) returned non-JSON for ${args.schemaName}`);
+//   }
+//   return { data: args.validate(parsed), raw: parsed };
+// }
+// ---------------------------------------------------------------------------
 
 function extractChatContent(payload: unknown): string {
   if (typeof payload !== "object" || payload === null) return "";

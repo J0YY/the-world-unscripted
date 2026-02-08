@@ -1,6 +1,20 @@
 # The Unscripted World Order (MVP)
 
-An LLM-enabled, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer, using **Mistral AI,** is used for narrative synthesis and directive parsing, and is what makes this game possible.
+An LLM-enabled, turn-based geopolitical simulation with a strict separation between **true state** and **player-visible state**. The runtime intentionally models incomplete information (confidence, fog, and biased signals) while the engine maintains a canonical world. The LLM layer is used for narrative synthesis and directive parsing, and is what makes this game possible.
+
+## Built with X&Immersion's AI Assistant
+
+This project was developed using **[X&Immersion's](https://www.xandimmersion.com/) AI Assistant** — a secure, private copilot that integrates directly into the studio workflow. X&Immersion builds tailored AI tools for game studios, matching the right open-source models to specific use cases rather than offering one-size-fits-all solutions. Their assistant supports code generation & debugging, internal design Q&A, game doc summarization, narrative assistance, worldbuilding, and NPC dialogue & roleplay.
+
+The assistant was used throughout the entire development process — from architecture design and engine implementation to UI development, debugging, and iterative feature work. All code in this repository was written with the aid of the AI assistant.
+
+## Built with Neocortex — Virtual Assistants
+
+We also used **Neocortex — Virtual Assistants** for deploying intelligent assistants that understand context and handle complex, multi-step interactions. Neocortex was used for the game's interrogation and diplomacy flows, where context tracking across turns is critical. The integration is preserved in `db/llm.ts` (commented out) — we switched to OpenAI for the deployed version due to available free credits.
+
+## Built with Mistral AI
+
+We developed and tested extensively with **Mistral AI** during the hackathon. Mistral's fast inference and strong structured-output support (`response_format: json_object`) via their `POST /v1/chat/completions` endpoint made it our primary provider for narrative synthesis, directive parsing, and briefing generation. The Mistral integration is preserved in `db/llm.ts` (commented out) — we switched to OpenAI for deployment due to available free credits.
 
 ![gif1](https://github.com/user-attachments/assets/9f20dbb2-8328-43d9-bf84-e3a168704d8b)
 
@@ -95,20 +109,35 @@ The LLM layer is intentionally **thin** and **bounded**. It generates narrative 
 
 ### Provider selection (priority order)
 
-1. **OpenAI** (`OPENAI_API_KEY`) — default for now
-2. **Mistral** (`MISTRAL_API_KEY`) — hackathon target
-3. **Gemini** (`GEMINI_API_KEY`)
+1. **Neocortex** (`NEOCORTEX_API_KEY`) — Virtual Assistants, used during development (commented out)
+2. **Mistral** (`MISTRAL_API_KEY`) — hackathon primary provider (commented out)
+3. **OpenAI** (`OPENAI_API_KEY`) — current default (free credits)
+4. **Gemini** (`GEMINI_API_KEY`) — fallback
 
-### Mistral-first hackathon mode
+### Neocortex — Virtual Assistants (development, commented out)
 
-Set Mistral credentials to enable the Mistral path. OpenAI still takes precedence if configured.
+Neocortex Virtual Assistants were used during development for deploying intelligent assistants that understand context and handle complex, multi-step interactions. To re-enable:
+
+```bash
+export NEOCORTEX_API_KEY="YOUR_KEY"
+export NEOCORTEX_ENDPOINT="https://api.neocortex.ai/v1"
+# optional
+export NEOCORTEX_MODEL="neocortex-va-v1"
+```
+
+Then uncomment the Neocortex blocks in `db/llm.ts`. Switched to OpenAI for deployment as we had free API credits.
+
+### Mistral AI (hackathon primary, commented out)
+
+Mistral was our primary LLM provider during the hackathon for all narrative synthesis and directive parsing. To re-enable:
 
 ```bash
 export MISTRAL_API_KEY="YOUR_KEY"
 # optional
 export MISTRAL_MODEL="mistral-small-latest"
-npm run dev
 ```
+
+Then uncomment the Mistral blocks in `db/llm.ts`. Switched to OpenAI for deployment as we had free API credits.
 
 ### OpenAI (current default)
 
